@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shop — MONO. Studio</title>
+  <link rel="stylesheet" href="/assets/css/style.css">
+</head>
+<body data-page="shop">
+
+  <div class="wrap">
+    <div class="page-head">
+      <div class="crumbs"><a href="/index.html">Trang chủ</a> / Shop</div>
+      <h1>Shop</h1>
+    </div>
+
+    <div class="shop-layout">
+      <aside class="filters" id="filters" aria-label="Bộ lọc">
+        <div class="filter-group">
+          <h4>Tìm kiếm</h4>
+          <div class="field" style="margin:0"><input id="search" placeholder="Tên sản phẩm…" aria-label="Tìm sản phẩm"></div>
+        </div>
+        <div class="filter-group">
+          <h4>Danh mục</h4>
+          <label><input type="radio" name="cat" value="all" checked> Tất cả</label>
+          <label><input type="radio" name="cat" value="tops"> Tops</label>
+          <label><input type="radio" name="cat" value="bottoms"> Bottoms</label>
+          <label><input type="radio" name="cat" value="outerwear"> Outerwear</label>
+          <label><input type="radio" name="cat" value="accessories"> Accessories</label>
+        </div>
+      </aside>
+
+      <div>
+        <div class="shop-toolbar">
+          <button class="filter-toggle btn btn-ghost btn-sm" id="filter-toggle">Bộ lọc</button>
+          <span class="count" id="shop-count">…</span>
+          <select id="sort" aria-label="Sắp xếp">
+            <option value="newest">Mới nhất</option>
+            <option value="price-asc">Giá tăng dần</option>
+            <option value="price-desc">Giá giảm dần</option>
+          </select>
+        </div>
+        <div class="grid" id="shop-grid"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/assets/js/api.js"></script>
+  <script src="/assets/js/partials.js"></script>
+  <script src="/assets/js/app.js"></script>
+</body>
+</html>

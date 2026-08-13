@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Liên hệ — MONO. Studio</title>
+  <link rel="stylesheet" href="/assets/css/style.css">
+</head>
+<body data-page="contact">
+
+  <div class="wrap">
+    <div class="page-head">
+      <div class="crumbs"><a href="/index.html">Trang chủ</a> / Liên hệ</div>
+      <h1>Liên hệ</h1>
+    </div>
+    <div class="form-page" style="margin:0;padding-top:20px">
+      <div class="panel">
+        <h2>Gửi tin nhắn</h2>
+        <form id="contact-form">
+          <div class="field"><label for="c-name">Họ tên</label><input id="c-name" required></div>
+          <div class="field"><label for="c-email">Email</label><input id="c-email" type="email" required></div>
+          <div class="field"><label for="c-msg">Nội dung</label><textarea id="c-msg" rows="4" required></textarea></div>
+          <button class="btn" style="width:100%">Gửi</button>
+        </form>
+        <p class="form-note">Hoặc email: <a href="mailto:hello@mono.local">hello@mono.local</a> · 1900 000 000</p>
+      </div>
+    </div>
+  </div>
+
+  <script src="/assets/js/api.js"></script>
+  <script src="/assets/js/partials.js"></script>
+  <script src="/assets/js/app.js"></script>
+  <script>
+    document.getElementById('contact-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      Toast.show('Đã gửi tin nhắn (demo). Cảm ơn bạn!');
+      e.target.reset();
+    });
+  </script>
+</body>
+</html>

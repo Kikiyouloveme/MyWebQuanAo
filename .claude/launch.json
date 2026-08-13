@@ -1,0 +1,14 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "velathier",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["server/server.js"],
+      "port": 5173,
+      "env": {
+        "DISABLE_RATE_LIMIT": "1"
+      }
+    }
+  ]
+}
