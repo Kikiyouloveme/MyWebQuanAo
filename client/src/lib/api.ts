@@ -22,6 +22,7 @@ export interface User {
   phone: string;
   role: Role;
   emailVerified: boolean;
+  avatarId: number;
   addresses: Address[];
   createdAt: string;
 }
@@ -36,6 +37,7 @@ export interface Variant {
 }
 
 export interface Product {
+  media?: {color:string;viewType:string;localPath:string;altText:string}[];
   id: string;
   title: string;
   price: number;
@@ -56,6 +58,11 @@ export interface Product {
 }
 
 export interface OrderItem {
+  designRevisionId?: string;
+  lineId?: string;
+  itemType?: 'regular' | 'custom';
+  stockConsumed?: boolean;
+  priceBreakdown?: {basePrice:number;frontFee:number;backFee:number;unitTotal:number;printFee?:number;positions?:{position:string;contentType:string;fee:number}[]};
   productId: string;
   variantId: string;
   sku: string;
@@ -87,6 +94,12 @@ export interface PaymentInfo {
   amount?: number;
   processedAt?: string;
   live?: boolean;
+  /** VietQR: nội dung chuyển khoản in trên mã QR */
+  reference?: string;
+  requestedAt?: string;
+  expiresAt?: string;
+  confirmedBy?: string;
+  source?: string;
 }
 
 export type OrderStatus =
@@ -104,6 +117,7 @@ export interface OrderHistoryEntry {
 }
 
 export interface Order {
+  allowedTransitions?: string[];
   id: string;
   userId: string | null;
   customerEmail: string;
@@ -114,12 +128,13 @@ export interface Order {
   voucher: VoucherSnapshot | null;
   shippingFee: number;
   total: number;
-  payMethod: "cod" | "vnpay";
+  payMethod: "cod" | "vnpay" | "vietqr";
   payStatus: "pending" | "paid" | "failed";
   status: OrderStatus;
   stockState?: string;
   payment?: PaymentInfo | null;
-  shipping: { carrier: string; trackingNumber: string; handedOverAt: string | null; deliveredAt: string | null };
+  shipping: { carrier: string; trackingNumber: string; handedOverAt: string | null; deliveredAt: string | null; estimatedDeliveryAt?:string|null;milestone?:string;customerNote?:string };
+  demo?: boolean;
   cancel?: { reason: string; by: string; at: string } | null;
   refund?: {
     status: "refunded" | "pending_manual" | "pending";
@@ -268,7 +283,7 @@ export interface MailRecord {
   subject: string;
   template: string;
   mode: "smtp" | "outbox";
-  status: "sent" | "failed";
+  status: "sent" | "failed" | "pending";
   error?: string;
   html?: string | null;
   /** Email chứa mã OTP — nội dung không được hiển thị */
@@ -299,6 +314,8 @@ async function req<T>(path: string, opts: RequestInit = {}): Promise<T> {
   if (!(opts.body instanceof FormData)) headers["Content-Type"] = "application/json";
   const token = getToken();
   if (token) headers.Authorization = "Bearer " + token;
+  headers['X-Print-Session']='1';
+  const csrf=sessionStorage.getItem('vela-print-csrf');if(csrf)headers['X-Print-CSRF']=csrf;
 
   const res = await fetch(path, { ...opts, headers });
   const data = await res.json().catch(() => ({}));
@@ -316,8 +333,10 @@ async function req<T>(path: string, opts: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
+  async printSession(){const result=await req<{csrf:string}>('/api/print/session',{method:'POST'});sessionStorage.setItem('vela-print-csrf',result.csrf);},
   get: <T>(p: string) => req<T>(p),
   post: <T>(p: string, body?: unknown) => req<T>(p, { method: "POST", body: body instanceof FormData ? body : JSON.stringify(body ?? {}) }),
+  patch: <T>(p: string, body?: unknown) => req<T>(p, { method: "PATCH", body: JSON.stringify(body ?? {}) }),
   put: <T>(p: string, body?: unknown) => req<T>(p, { method: "PUT", body: JSON.stringify(body ?? {}) }),
   del: <T>(p: string) => req<T>(p, { method: "DELETE" }),
   async upload(file: File): Promise<{ url: string }> {

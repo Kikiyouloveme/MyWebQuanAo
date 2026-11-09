@@ -1,0 +1,2 @@
+const {defineConfig}=require('@playwright/test');
+module.exports=defineConfig({testDir:'./tests/browser',timeout:90000,workers:1,retries:0,reporter:[['list'],['html',{outputFolder:'server/private/browser-report',open:'never'}]],outputDir:'server/private/browser-results',use:{baseURL:process.env.TEST_BASE_URL,headless:true,screenshot:'only-on-failure',trace:'retain-on-failure'},projects:[{name:'desktop',use:{viewport:{width:1440,height:1000}}},{name:'mobile',use:{viewport:{width:360,height:844},isMobile:true,hasTouch:true}}]});

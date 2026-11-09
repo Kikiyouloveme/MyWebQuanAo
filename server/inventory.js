@@ -22,23 +22,26 @@ function reserve(order) {
 
   return db.transaction(() => {
     // Vòng 1: kiểm tra
-    const targets = [];
+    const targets = new Map();
     for (const line of order.items) {
       const product = db.products.byId(line.productId);
       if (!product) throw badRequest(`Sản phẩm ${line.title} không còn tồn tại`);
       const variant = db.products.variantById(product, line.variantId);
       if (!variant) throw badRequest(`Phiên bản ${line.color}/${line.size} của "${line.title}" không còn tồn tại`);
-      if (variant.stock < line.qty) {
+      if (!Number.isSafeInteger(line.qty) || line.qty <= 0) throw badRequest('Số lượng không hợp lệ');
+      const key = JSON.stringify([product.id, variant.id]);
+      const qty = (targets.get(key)?.qty || 0) + line.qty;
+      if (variant.stock < qty) {
         throw conflict(
           variant.stock === 0
             ? `"${line.title}" (${line.color} / ${line.size}) vừa hết hàng`
             : `"${line.title}" (${line.color} / ${line.size}) chỉ còn ${variant.stock} sản phẩm`
         );
       }
-      targets.push({ variant, qty: line.qty });
+      targets.set(key, { variant, qty });
     }
     // Vòng 2: trừ
-    for (const t of targets) t.variant.stock -= t.qty;
+    for (const t of targets.values()) t.variant.stock -= t.qty;
     order.stockState = 'reserved';
     return { changed: true };
   });
@@ -53,6 +56,7 @@ function release(order, reason = '') {
 
   return db.transaction(() => {
     for (const line of order.items) {
+      if (line.stockConsumed) continue;
       const product = db.products.byId(line.productId);
       if (!product) continue; // sản phẩm đã bị xoá — không còn kho để hoàn
       const variant = db.products.variantById(product, line.variantId);

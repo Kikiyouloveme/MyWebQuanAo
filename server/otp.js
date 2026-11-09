@@ -18,6 +18,7 @@ const { badRequest } = require('./security');
 const PURPOSE = {
   RESET_PASSWORD: 'reset_password',
   VERIFY_EMAIL: 'verify_email',
+  GUEST_CHECKOUT: 'guest_checkout',
 };
 
 const hash = (code, salt) => crypto.createHash('sha256').update(`${salt}:${code}`).digest('hex');
@@ -81,7 +82,7 @@ function verify(email, purpose, inputCode) {
   const e = String(email).toLowerCase();
   const rec = db.otps.find(e, purpose);
 
-  if (!rec) return { ok: false, message: 'Mã xác minh không tồn tại hoặc đã được sử dụng. Vui lòng yêu cầu mã mới.' };
+  if (!rec || !rec.codeHash) return { ok: false, message: 'Mã xác minh không tồn tại hoặc đã được sử dụng. Vui lòng yêu cầu mã mới.' };
 
   if (Date.now() > rec.expiresAt) {
     db.otps.remove(e, purpose);

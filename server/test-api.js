@@ -6,8 +6,7 @@
  * phí ship theo ngưỡng, tồn kho theo biến thể, hủy đơn, đổi/trả và OTP.
  */
 require('./config');
-const fs = require('fs');
-const { DB_FILE } = require('./db');
+const db = require('./db');
 const BASE = process.env.TEST_BASE_URL || `http://localhost:${process.env.PORT || 5173}`;
 
 let passed = 0, failed = 0;
@@ -50,6 +49,7 @@ const PATH_TO = {
 /** Đưa đơn tới trạng thái đích bằng cách đi đúng từng bước */
 async function advanceTo(orderId, target, token) {
   for (const status of PATH_TO[target]) {
+    if (status === 'shipped') await call('PUT', `/api/admin/orders/${orderId}/shipping`, { token, body: { carrier:'Vận chuyển kiểm thử', trackingNumber:`TEST-${orderId}` } });
     const res = await call('PUT', `/api/admin/orders/${orderId}/status`, { token, body: { status } });
     if (res.status !== 200) return res;
   }
@@ -57,14 +57,15 @@ async function advanceTo(orderId, target, token) {
 }
 
 async function main() {
+  await db.connect();
   /* ============ CHUẨN BỊ ============ */
   const admin = await call('POST', '/api/auth/login', { body: { email: 'admin@velathier.vn', password: 'admin123' } });
   if (admin.status !== 200) { console.error('Không đăng nhập được admin:', admin.data); process.exit(1); }
   const adminToken = admin.data.token;
 
   const products = (await call('GET', '/api/products')).data;
-  const p1 = products.find((p) => p.variants.some((v) => v.stock > 5));
-  const v1 = p1.variants.find((v) => v.stock > 5);
+  const candidates = products.flatMap((p) => p.variants.map((v) => ({ p, v }))).sort((a, b) => b.v.stock - a.v.stock);
+  const { p: p1, v: v1 } = candidates[0];
   const soldOut = products.flatMap((p) => p.variants.map((v) => ({ p, v }))).find((x) => x.v.stock === 0);
 
   // Hai khách hàng để kiểm tra cách ly dữ liệu
@@ -114,12 +115,12 @@ async function main() {
 
   /**
    * Lấy mã OTP để chạy kiểm thử.
-   * Đọc thẳng từ file dữ liệu chứ KHÔNG qua API — vì API cố tình không bao giờ trả
+   * Đọc trực tiếp MongoDB chứ KHÔNG qua API — vì API cố tình không bao giờ trả
    * nội dung email chứa OTP (kể cả cho admin). Chỉ làm được ở môi trường phát triển,
    * nơi nội dung email vẫn được lưu lại.
    */
-  const grabOtp = (email, template) => {
-    const data = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+  const grabOtp = async (email, template) => {
+    const data = { emails: await db.models.emails.find({ to: email, template }).sort({ createdAt: -1 }).lean() };
     // Email mới nhất nằm đầu danh sách
     const mail = (data.emails || []).find((m) => m.to === email && m.template === template);
     if (!mail || !mail.html) return null;
@@ -127,7 +128,7 @@ async function main() {
     return match ? match[1] : null;
   };
 
-  const verifyCode = grabOtp(A.email, 'verifyEmail');
+  const verifyCode = await grabOtp(A.email, 'verifyEmail');
   check('Email xác minh có chứa mã 6 số', !!verifyCode);
 
   const badOtp = await call('POST', '/api/auth/verify-email/confirm', { token: A.token, body: { code: '000000' } });
@@ -140,7 +141,7 @@ async function main() {
   check('OTP đã dùng không thể tái sử dụng', reuseOtp.status === 200 && reuseOtp.data.ok === true);
 
   // Xác minh cho khách B để dùng ở các phần sau
-  const codeB = grabOtp(B.email, 'verifyEmail');
+  const codeB = await grabOtp(B.email, 'verifyEmail');
   await call('POST', '/api/auth/verify-email/confirm', { token: B.token, body: { code: codeB } });
 
   /* ============ QUÊN MẬT KHẨU ============ */
@@ -149,7 +150,7 @@ async function main() {
   check('Không tiết lộ email có tồn tại hay không', forgotUnknown.status === 200 && forgotUnknown.data.ok === true);
 
   await call('POST', '/api/auth/forgot-password', { body: { email: B.email } });
-  const resetCode = grabOtp(B.email, 'resetPassword');
+  const resetCode = await grabOtp(B.email, 'resetPassword');
   check('Nhận được mã đặt lại mật khẩu', !!resetCode);
 
   const skipOtp = await call('POST', '/api/auth/forgot-password/reset', {
@@ -309,7 +310,7 @@ async function main() {
       payMethod: 'cod',
     },
   });
-  check('Khách vãng lai không đặt được hàng', guestOrder.status === 401);
+  check('Khách vãng lai thiếu email/vé OTP không đặt được hàng', guestOrder.status === 400);
 
   /* ============ CHỐNG GIẢ MẠO THANH TOÁN ============ */
   section('CHỐNG GIẢ MẠO THANH TOÁN');
@@ -467,7 +468,7 @@ async function main() {
   /** Tạo nhanh một khách đã xác minh email */
   const mkVerifiedUser = async () => {
     const u = await mkUser();
-    const code = grabOtp(u.email, 'verifyEmail');
+    const code = await grabOtp(u.email, 'verifyEmail');
     await call('POST', '/api/auth/verify-email/confirm', { token: u.token, body: { code } });
     return u;
   };
@@ -576,7 +577,12 @@ async function main() {
       payMethod: 'vnpay',
     },
   })).data;
-  await advanceTo(unpaidVnp.id, 'shipped', adminToken);
+  for (const status of ['confirmed','processing','ready_to_ship','shipped']) {
+    const rejected = await call('PUT', `/api/admin/orders/${unpaidVnp.id}/status`, { token: adminToken, body: { status } });
+    check(`VNPay chưa thanh toán chặn ${status}`, rejected.status === 400);
+  }
+  const unpaidTracking = await call('PUT', `/api/admin/orders/${unpaidVnp.id}/shipping`, { token: adminToken, body: { carrier: 'Test', trackingNumber: 'TEST-UNPAID' } });
+  check('VNPay chưa thanh toán chặn cập nhật vận chuyển', unpaidTracking.status === 400);
   const deliverUnpaid = await call('PUT', `/api/admin/orders/${unpaidVnp.id}/status`, {
     token: adminToken, body: { status: 'delivered' },
   });
@@ -588,6 +594,7 @@ async function main() {
   const retOrder = await placeOrder(retUser, [{ productId: p1.id, variantId: v1.id, qty: 2 }]);
   await advanceTo(retOrder.id, 'delivered', adminToken);
 
+  const validProof=await require('sharp')({create:{width:32,height:32,channels:3,background:'#c24c28'}}).png().toBuffer();
   const mkReturnForm = (items, extra = {}) => {
     const f = new FormData();
     f.append('orderId', extra.orderId || retOrder.id);
@@ -595,7 +602,7 @@ async function main() {
     f.append('reason', extra.reason || 'defective');
     f.append('description', extra.description || 'Sản phẩm bị lỗi đường may nghiêm trọng');
     f.append('items', JSON.stringify(items));
-    f.append('photos', new Blob([new Uint8Array([0xff, 0xd8, 0xff, 0xdb, 0, 1, 2, 3])], { type: 'image/jpeg' }), 'proof.jpg');
+    f.append('photos', new Blob([validProof], { type: 'image/png' }), 'proof.png');
     return f;
   };
 
@@ -611,11 +618,16 @@ async function main() {
   });
   check('Chặn trả nhiều hơn số đã mua', overQty.status === 400);
 
+  const forgedProof=mkReturnForm([{variantId:v1.id,qty:1}]);forgedProof.set('photos',new Blob(['MZ fake image'],{type:'image/png'}),'fake.png');
+  check('Chặn ảnh minh chứng giả định dạng',(await call('POST','/api/returns',{token:retUser.token,raw:true,body:forgedProof})).status===400);
   const firstReturn = await call('POST', '/api/returns', {
     token: retUser.token, raw: true,
     body: mkReturnForm([{ variantId: v1.id, qty: 1 }]),
   });
   check('Trả một phần được chấp nhận', firstReturn.status === 201);
+  check('Ảnh đổi trả không công khai',(await call('GET',firstReturn.data.photos[0])).status===401);
+  check('Khách khác không xem ảnh đổi trả',(await call('GET',firstReturn.data.photos[0],{token:B.token})).status===404);
+  check('Chủ đơn xem ảnh đổi trả',(await call('GET',firstReturn.data.photos[0],{token:retUser.token})).status===200);
 
   const whileInProgress = await call('POST', '/api/returns', {
     token: retUser.token, raw: true,
@@ -808,6 +820,11 @@ async function main() {
   const afterPendingRefund = await call('GET', `/api/orders/${payOrder.id}`, { token: adminToken });
   check('Đơn chờ hoàn tiền không bị đánh dấu refunded', afterPendingRefund.data.status === 'refund_pending');
   check('Chưa cộng vào tổng đã hoàn', !afterPendingRefund.data.refundedTotal);
+  const manualStaffToken=(await call('POST','/api/auth/login',{body:{email:'staff@velathier.vn',password:'staff123'}})).data.token;
+  const staffManual=await call('POST',`/api/returns/${vnpReturn.data.id}/refund`,{token:manualStaffToken,body:{amount:100000,reference:'TEST-MANUAL-RECONCILED'}});
+  check('Staff không tự xác nhận đối soát VNPay thủ công',staffManual.status===403);
+  const adminManual=await call('POST',`/api/returns/${vnpReturn.data.id}/refund`,{token:adminToken,body:{amount:100000,reference:'TEST-MANUAL-RECONCILED'}});
+  check('Admin xác nhận mã đối soát thủ công có ghi rõ chế độ',adminManual.status===200&&adminManual.data.refund.status==='refunded'&&/không gọi API/.test(adminManual.data.refund.statusNote));
 
   /* ============ (9) FAIL-SAFE KHI THIẾU HẠ TẦNG ============ */
   section('AUDIT 9 — FAIL-SAFE HẠ TẦNG');
@@ -871,7 +888,7 @@ async function main() {
   // giá niêm yết — nếu không, tổng theo sản phẩm sẽ vượt doanh thu chung khi có giảm giá.
   const reportUser = await mkVerifiedUser();
   const reportOrder = await placeOrder(reportUser, [{ productId: p1.id, variantId: v1.id, qty: 2 }], { voucherCode: 'WELCOME10' });
-  check('Đơn dùng voucher được tạo', !!reportOrder.id && reportOrder.discount > 0);
+  check('Đơn dùng voucher được tạo', !!reportOrder.id && reportOrder.discount > 0, JSON.stringify(reportOrder));
   await advanceTo(reportOrder.id, 'delivered', adminToken);
 
   const statsAfter = (await call('GET', '/api/admin/stats', { token: adminToken })).data;
@@ -951,7 +968,7 @@ async function main() {
   console.log(`\n${'─'.repeat(50)}`);
   console.log(`Kết quả: ${passed} đạt · ${failed} lỗi`);
   console.log('─'.repeat(50));
-  process.exit(failed > 0 ? 1 : 0);
+  process.exitCode = failed > 0 ? 1 : 0;
 }
 
-main().catch((e) => { console.error('Lỗi khi chạy kiểm thử:', e); process.exit(1); });
+main().catch((e) => { console.error('Lỗi khi chạy kiểm thử:', e); process.exitCode = 1; }).finally(() => db.close());

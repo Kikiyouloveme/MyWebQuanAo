@@ -1,208 +1,18 @@
-/**
- * Data access layer.
- *
- * Hiện lưu bằng JSON file. Mọi truy cập dữ liệu trong app đều đi qua module này
- * (không nơi nào đọc/ghi db.json trực tiếp) — nhờ vậy khi chuyển sang PostgreSQL
- * chỉ cần viết lại phần thân các hàm repo bên dưới, phần nghiệp vụ giữ nguyên.
- *
- * Ghi có khoá tuần tự (writeQueue) + ghi file nguyên tử (temp → rename) để tránh
- * hỏng dữ liệu khi nhiều request cùng ghi.
- */
-const fs = require('fs');
-const path = require('path');
+/** MongoDB repository facade. See mongo-store.js for the async request boundary. */
 const crypto = require('crypto');
-
-const DATA_DIR = path.join(__dirname, 'data');
-const DB_FILE = path.join(DATA_DIR, 'db.json');
-
-const SCHEMA_VERSION = 2;
-
-const EMPTY = {
-  schemaVersion: SCHEMA_VERSION,
-  users: [],
-  products: [],
-  orders: [],
-  vouchers: [],
-  returns: [],
-  otps: [],
-  emails: [],
-  messages: [],
-  counters: { order: 1000, return: 500 },
-};
-
-let state = null;
-let dirty = false;
-let flushing = false;
-
-/* ---------------- load & migrate ---------------- */
-
-function load() {
-  if (state) return state;
-  if (!fs.existsSync(DB_FILE)) {
-    state = structuredClone(EMPTY);
-    flushSync();
-  } else {
-    state = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-    migrate();
-  }
-  return state;
-}
-
-/**
- * Nâng cấp dữ liệu cũ lên schema mới mà KHÔNG làm mất dữ liệu đang có.
- * Sao lưu file cũ trước khi ghi đè lần đầu.
- */
-function migrate() {
-  const from = state.schemaVersion || 1;
-  if (from >= SCHEMA_VERSION) {
-    // vẫn đảm bảo các collection mới tồn tại
-    for (const k of Object.keys(EMPTY)) if (state[k] === undefined) state[k] = structuredClone(EMPTY[k]);
-    return;
-  }
-
-  // sao lưu một lần
-  const backup = DB_FILE.replace(/\.json$/, `.v${from}.backup.json`);
-  if (!fs.existsSync(backup)) fs.copyFileSync(DB_FILE, backup);
-
-  for (const k of Object.keys(EMPTY)) if (state[k] === undefined) state[k] = structuredClone(EMPTY[k]);
-  if (!state.counters.return) state.counters.return = 500;
-
-  /* v1 → v2 */
-  // Users: thêm emailVerified, phone, addresses
-  for (const u of state.users) {
-    if (u.emailVerified === undefined) {
-      // Tài khoản seed sẵn (admin/staff/demo) coi như đã xác minh để không khoá chính mình ra ngoài
-      u.emailVerified = ['admin', 'staff'].includes(u.role) || u.id === 'u_demo';
-    }
-    if (u.phone === undefined) u.phone = (u.profile && u.profile.phone) || '';
-    if (!Array.isArray(u.addresses)) {
-      u.addresses = [];
-      // Chuyển địa chỉ rời rạc trong profile cũ thành một địa chỉ mặc định
-      if (u.profile && u.profile.address) {
-        u.addresses.push({
-          id: uid('addr'),
-          fullName: u.name,
-          phone: u.phone || '',
-          province: u.profile.state || '',
-          district: u.profile.city || '',
-          ward: '',
-          line1: u.profile.address,
-          note: '',
-          isDefault: true,
-          createdAt: u.createdAt || new Date().toISOString(),
-        });
-      }
-    }
-    if (u.tokensValidFrom === undefined) u.tokensValidFrom = 0;
-  }
-
-  // Products: stock chung → variants theo màu + size
-  for (const p of state.products) {
-    if (!Array.isArray(p.variants)) {
-      const colors = p.color ? [p.color] : ['Default'];
-      const sizes = Array.isArray(p.sizes) && p.sizes.length ? p.sizes : ['Free size'];
-      const legacyStock = typeof p.stock === 'number' ? p.stock : 50;
-      // Chia đều tồn kho cũ cho các tổ hợp, phần dư dồn vào tổ hợp đầu
-      const combos = colors.length * sizes.length;
-      const base = Math.floor(legacyStock / combos);
-      const extra = legacyStock - base * combos;
-      p.variants = [];
-      let i = 0;
-      for (const color of colors) {
-        for (const size of sizes) {
-          p.variants.push({
-            id: uid('var'),
-            sku: makeSku(p.id, color, size),
-            color,
-            size,
-            stock: base + (i === 0 ? extra : 0),
-            active: true,
-          });
-          i++;
-        }
-      }
-    }
-    if (!Array.isArray(p.colors)) p.colors = [...new Set(p.variants.map((v) => v.color))];
-    delete p.stock; // nguồn sự thật giờ là variants
-  }
-
-  // Orders: chuẩn hoá sang schema mới
-  for (const o of state.orders) {
-    if (!Array.isArray(o.history)) {
-      o.history = [{ at: o.createdAt, status: o.status, actor: 'system', note: 'Đơn hàng được tạo' }];
-    }
-    if (o.discount === undefined) o.discount = 0;
-    if (o.voucher === undefined) o.voucher = null;
-    if (o.shippingFee === undefined) o.shippingFee = o.ship ?? 0;
-    if (o.stockState === undefined) o.stockState = o.status === 'cancelled' ? 'released' : 'reserved';
-    if (!o.shippingAddress && o.customer) {
-      o.shippingAddress = {
-        fullName: o.customer.name, phone: o.customer.phone,
-        province: '', district: '', ward: '', line1: o.customer.address || '',
-        note: o.customer.note || '',
-      };
-    }
-    if (o.shipping === undefined) o.shipping = { carrier: '', trackingNumber: '', handedOverAt: null, deliveredAt: null };
-    if (o.cancel === undefined) o.cancel = null;
-    if (o.refund === undefined) o.refund = null;
-    // Ánh xạ trạng thái cũ sang enum mới
-    const MAP = { new: 'pending', confirmed: 'confirmed', shipping: 'shipped', done: 'delivered', cancelled: 'cancelled' };
-    if (MAP[o.status]) o.status = MAP[o.status];
-    // Item cũ chưa có variant → suy ra từ size đã lưu
-    for (const it of o.items) {
-      if (it.color === undefined) it.color = '';
-      if (it.variantId === undefined) it.variantId = null;
-    }
-  }
-
-  state.schemaVersion = SCHEMA_VERSION;
-  flushSync();
-  console.log(`[VELATHIER] Đã nâng cấp dữ liệu schema v${from} → v${SCHEMA_VERSION} (bản sao lưu: ${path.basename(backup)})`);
-}
-
+const store = require('./mongo-store');
+const SCHEMA_VERSION = 5;
+const load = store.load;
+// Changes are staged within db.run(), validated and persisted before HTTP response.
+const save = () => { load(); };
+const saveNow = save;
+// This is a synchronous business operation, NOT a standalone MongoDB transaction.
+function transaction(fn) { const result = fn(load()); save(); return result; }
 const makeSku = (productId, color, size) =>
   `${String(productId).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10)}-${String(color).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4) || 'STD'}-${String(size).toUpperCase().replace(/[^A-Z0-9]/g, '') || 'OS'}`;
 
-/* ---------------- ghi ---------------- */
-
-function flushSync() {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  const tmp = DB_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
-  fs.renameSync(tmp, DB_FILE); // đổi tên là thao tác nguyên tử → không bao giờ đọc phải file ghi dở
-  dirty = false;
-}
-
-/** Đánh dấu cần ghi; gom nhiều thay đổi trong cùng tick thành một lần ghi đĩa */
-function save() {
-  dirty = true;
-  if (flushing) return;
-  flushing = true;
-  setImmediate(() => {
-    flushing = false;
-    if (dirty) flushSync();
-  });
-}
-
-/** Ghi ngay lập tức — dùng cho thao tác tiền bạc/tồn kho cần chắc chắn đã xuống đĩa */
-function saveNow() {
-  flushSync();
-}
-
 function uid(prefix) {
   return prefix + '_' + Date.now().toString(36) + crypto.randomBytes(4).toString('hex');
-}
-
-/**
- * Chạy một thao tác thay đổi dữ liệu rồi ghi ngay.
- * Node chạy đơn luồng nên callback là atomic đối với các request khác — dùng cho
- * các đoạn đọc-rồi-ghi nhạy cảm (trừ kho, tăng lượt dùng voucher).
- */
-function transaction(fn) {
-  const d = load();
-  const result = fn(d);
-  saveNow();
-  return result;
 }
 
 /* ---------------- repository ---------------- */
@@ -328,5 +138,6 @@ const messages = {
 module.exports = {
   load, save, saveNow, uid, transaction, makeSku,
   users, products, orders, vouchers, returns, otps, emails, messages,
-  DB_FILE, SCHEMA_VERSION,
+  SCHEMA_VERSION, connect: store.connect, close: store.close, run: store.run,
+  middleware: store.middleware, track: store.track, status: store.status, models: store.models,
 };

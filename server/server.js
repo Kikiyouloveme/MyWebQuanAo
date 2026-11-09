@@ -7,13 +7,16 @@ const path = require('path');
 const fs = require('fs');
 const express = require('express');
 const compression = require('compression');
+const cors = require('cors');
 const multer = require('multer');
+const sharp = require('sharp');
+const { AsyncResource } = require('node:async_hooks');
 
 const db = require('./db');
 const mailer = require('./mailer');
 const vnpay = require('./vnpay');
 const otpService = require('./otp');
-const { securityHeaders, errorHandler, wrap, requireStaff, limiters, badRequest, RATE_LIMIT_DISABLED } = require('./security');
+const { securityHeaders, errorHandler, wrap, requireStaff, requireAuth, notFound, limiters, badRequest, RATE_LIMIT_DISABLED } = require('./security');
 
 const authRoutes = require('./routes/auth');
 const productRoutes = require('./routes/products');
@@ -30,14 +33,28 @@ const DIST = path.join(ROOT, 'client', 'dist');
 
 /* ==================== MIDDLEWARE NỀN ==================== */
 
-app.set('trust proxy', 1);
+app.set('trust proxy', process.env.TRUST_PROXY ? process.env.TRUST_PROXY.split(',').map(s=>s.trim()) : false);
 app.disable('x-powered-by');
 app.use(securityHeaders);
 app.use(compression());
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+app.use(cors({ origin: config.corsOrigins }));
+app.use((req,res,next)=>{
+  const requestId=require('node:crypto').randomUUID(),started=Date.now();res.set('X-Request-Id',requestId);
+  res.on('finish',()=>{if(config.isProd && (req.method!=='GET'||res.statusCode>=400))console.log(JSON.stringify({kind:'request-audit',requestId,method:req.method,path:req.path.slice(0,160),status:res.statusCode,userId:req.user?.id||null,ip:req.ip,durationMs:Date.now()-started}));});next();
+});
 
 /* ==================== TÀI NGUYÊN TĨNH ==================== */
+
+// Preserve historical URLs while removing public access to customer return evidence.
+app.get('/assets/img/returns/:key',db.middleware,requireAuth,wrap(async(req,res)=>{
+  const key=req.params.key;if(!/^[a-zA-Z0-9_.-]+$/.test(key)||key.includes('..'))throw notFound();
+  const ret=db.returns.all().find(r=>(r.photos||[]).includes('/assets/img/returns/'+key));
+  if(!ret||(ret.userId!==req.user.id&&!['admin','staff'].includes(req.user.role)))throw notFound();
+  const bytes=key.startsWith('retproof_')?await require('./private-storage').read('returns/'+key):await fs.promises.readFile(path.join(ROOT,'assets','img','returns',key));
+  res.set('Cache-Control','private, no-store').type(key.endsWith('.webp')?'webp':key.endsWith('.png')?'png':'jpeg').send(bytes);
+}));
 
 // Bundle Vite có hash trong tên → cache vĩnh viễn
 if (fs.existsSync(DIST)) {
@@ -64,29 +81,37 @@ const UPLOAD_DIR = path.join(ROOT, 'assets', 'img', 'uploads');
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 const uploadProduct = multer({
-  storage: multer.diskStorage({
-    destination: UPLOAD_DIR,
-    filename: (_req, file, cb) => {
-      const ext = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'image/svg+xml': '.svg' }[file.mimetype] || '.jpg';
-      cb(null, `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
-    },
-  }),
+  storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    if (!/^image\/(png|jpe?g|webp|svg\+xml)$/.test(file.mimetype)) {
-      return cb(badRequest('Chỉ chấp nhận ảnh JPG, PNG, WEBP hoặc SVG (tối đa 5MB)'));
+    if (!/^image\/(png|jpe?g|webp)$/.test(file.mimetype)) {
+      return cb(badRequest('Chỉ chấp nhận ảnh JPG, PNG, WEBP (tối đa 5MB)'));
     }
     cb(null, true);
   },
 });
 
-app.post('/api/upload', requireStaff, limiters.write, uploadProduct.single('image'), wrap(async (req, res) => {
+app.use('/api', (req,res,next) => {
+  // Public catalog uses targeted repositories and never joins the serialized unit of work.
+  if(req.method==='GET' && /^\/products(?:\/[^/]+)?\/?$/.test(req.path))return next();
+  return db.middleware(req,res,next);
+});
+app.use('/sitemap.xml', db.middleware);
+
+app.post('/api/upload', requireStaff, limiters.write, (req,res,next)=>uploadProduct.single('image')(req,res,AsyncResource.bind(e=>next(e ? badRequest('Ảnh JPG/PNG/WebP tối đa 5MB') : undefined))), wrap(async (req, res) => {
   if (!req.file) throw badRequest('Chưa chọn file ảnh hợp lệ');
-  res.json({ url: '/assets/img/uploads/' + req.file.filename });
+  let buffer;
+  try {const input=sharp(req.file.buffer,{limitInputPixels:25000000,failOn:'warning'});const meta=await input.metadata();if(!['png','jpeg','webp'].includes(meta.format)||meta.pages>1)throw Error();buffer=await input.rotate().resize(2000,2500,{fit:'inside',withoutEnlargement:true}).webp().toBuffer();}catch{throw badRequest('Ảnh hỏng hoặc sai định dạng');}
+  const filename=db.uid('catalog')+'.webp';
+  await fs.promises.writeFile(path.join(UPLOAD_DIR,filename),buffer,{flag:'wx'});
+  res.json({ url: '/assets/img/uploads/' + filename });
 }));
 
 /* ==================== API ==================== */
 
+app.use('/api', require('./routes/reviews').router);
+app.use('/api', require('./routes/review-photos').router);
+app.use('/api', require('./routes/custom-print').router);
 app.use('/api/auth', authRoutes.router);
 app.use('/api/products', productRoutes.router);
 app.use('/api/orders', orderRoutes.router);
@@ -97,7 +122,8 @@ app.use('/api/contact', contactRoutes.router);
 app.use('/api/admin', adminRoutes.router);
 
 app.get('/api/health', (_req, res) => res.json({
-  ok: true,
+  ok: db.status().connected,
+  database: db.status(),
   schemaVersion: db.SCHEMA_VERSION,
   vnpay: vnpay.isLive() ? 'live' : 'sandbox',
   mail: mailer.isLive() ? 'smtp' : 'outbox',
@@ -154,10 +180,14 @@ app.use(errorHandler);
 
 /* ==================== KHỞI ĐỘNG ==================== */
 
-db.load(); // nạp + migrate dữ liệu ngay khi khởi động để lỗi schema lộ ra sớm
+async function start() {
+await db.connect();
+const outboxTimer = require('./outbox-worker').start();
+const notificationTimer = setInterval(() => db.run(() => require('./custom-print').flushNotifications()).catch(e => console.error('[notifications]',e.message)), 15000);
+notificationTimer.unref();
 
 // Dọn OTP hết hạn mỗi 15 phút
-const otpCleanup = setInterval(() => otpService.purge(), 15 * 60 * 1000);
+const otpCleanup = setInterval(() => db.run(() => otpService.purge()).catch((e) => console.error(e.message)), 15 * 60 * 1000);
 otpCleanup.unref();
 
 // Hủy đơn quá hạn thanh toán để trả hàng về kho — chạy ngay khi khởi động rồi lặp lại
@@ -171,8 +201,8 @@ const sweep = () => {
     console.error('[VELATHIER] Lỗi khi quét đơn quá hạn:', e.message);
   }
 };
-sweep();
-const paymentSweep = setInterval(sweep, 5 * 60 * 1000);
+await db.run(sweep);
+const paymentSweep = setInterval(() => db.run(sweep).catch((e) => console.error(e.message)), 5 * 60 * 1000);
 paymentSweep.unref();
 
 const server = app.listen(config.port, () => {
@@ -187,9 +217,20 @@ const server = app.listen(config.port, () => {
 for (const signal of ['SIGTERM', 'SIGINT']) {
   process.on(signal, () => {
     console.log(`\n[VELATHIER] Nhận ${signal}, đang tắt máy chủ…`);
-    server.close(() => { db.saveNow(); process.exit(0); });
+    clearInterval(otpCleanup);
+    clearInterval(notificationTimer);
+    clearInterval(outboxTimer);
+    clearInterval(paymentSweep);
+    server.close(async () => { await db.close(); process.exit(0); });
     setTimeout(() => process.exit(1), 10000).unref();
   });
 }
 
-module.exports = app;
+}
+
+if (require.main === module) start().catch(async () => {
+  console.error("[MongoDB] Không thể khởi động. Kiểm tra MongoDB service và MONGO_URI trong .env.");
+  await db.close();
+  process.exitCode = 1;
+});
+module.exports = { app, start };

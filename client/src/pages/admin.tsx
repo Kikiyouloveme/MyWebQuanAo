@@ -1,4 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { PrintJobs } from '@/components/print-jobs';
+import { PrivateImage } from '@/components/private-image';
+import { PrintSettingsPanel } from '@/components/print-settings';
+import { ReviewModeration } from '@/components/review-moderation';
 import { Link } from "react-router-dom";
 import {
   Package, ShoppingCart, Users, BarChart3, Plus, Pencil, Trash2, Mail,
@@ -9,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, ConfirmDialog } from "@/components/ui/dialog";
+import { AvatarGlyph } from "@/components/ui/avatar-glyph";
 import { useAuth } from "@/context/auth";
 import { useToast } from "@/context/toast";
 import {
@@ -18,7 +23,7 @@ import {
 } from "@/lib/api";
 import { money, cn } from "@/lib/utils";
 
-type View = "dash" | "products" | "orders" | "returns" | "vouchers" | "messages" | "users" | "emails";
+type View = "dash" | "products" | "orders" | "returns" | "vouchers" | "messages" | "users" | "emails" | "printJobs" | "printSettings" | "reviews" | "pos";
 
 const ORDER_STATUSES = [
   "pending", "confirmed", "processing", "ready_to_ship", "shipped", "delivered",
@@ -33,8 +38,12 @@ export default function Admin() {
 
   const NAVS: { id: View; label: string; icon: typeof Package; adminOnly?: boolean }[] = [
     { id: "dash", label: "Tổng quan", icon: BarChart3 },
+    { id: "printJobs", label: "Xưởng in", icon: Package },
+    { id: "reviews", label: "Đánh giá", icon: MessageSquare, adminOnly:true },
+    { id: "printSettings", label: "Cấu hình in / Size", icon: Pencil },
     { id: "products", label: "Sản phẩm", icon: Package },
     { id: "orders", label: "Đơn hàng", icon: ShoppingCart },
+    { id: "pos", label: "Thu tiền POS", icon: Banknote },
     { id: "returns", label: "Đổi/Trả", icon: RefreshCcw },
     { id: "vouchers", label: "Mã giảm giá", icon: Ticket },
     { id: "messages", label: "Tin nhắn", icon: MessageSquare },
@@ -68,6 +77,10 @@ export default function Admin() {
 
         <div className="min-w-0">
           {view === "dash" && <DashView />}
+          {view === "printJobs" && <PrintJobs staff/>}
+          {view === "reviews" && isAdmin && <ReviewModeration/>}
+          {view === "printSettings" && <PrintSettingsPanel/>}
+          {view === "pos" && <PosView />}
           {view === "products" && <ProductsView />}
           {view === "orders" && <OrdersView />}
           {view === "returns" && <ReturnsView />}
@@ -607,6 +620,11 @@ function AdminOrderDialog({ orderId, onClose, onChanged }: { orderId: string; on
       await api.put(`/api/admin/orders/${orderId}/shipping`, {
         carrier: String(form.get("carrier") || ""),
         trackingNumber: String(form.get("trackingNumber") || ""),
+        estimatedDeliveryAt: String(form.get('estimatedDeliveryAt') || ''),
+        handedOverAt: form.get('handedOverAt') ? new Date(String(form.get('handedOverAt'))).toISOString() : '',
+        milestone: String(form.get('milestone') || 'prepared'),
+        correctionReason: String(form.get('correctionReason') || ''),
+        customerNote: String(form.get('customerNote') || ''),
       });
       load(); onChanged();
     } catch (err) {
@@ -694,13 +712,14 @@ function AdminOrderDialog({ orderId, onClose, onChanged }: { orderId: string; on
               onChange={(e) => updateStatus(e.target.value)}
               className="mt-2 h-10 w-full cursor-pointer rounded border border-input bg-card px-3 text-sm"
             >
-              {ORDER_STATUSES.map((s) => <option key={s} value={s}>{ORDER_STATUS_LABEL[s]}</option>)}
+              {ORDER_STATUSES.filter(s=>s===order.status||order.allowedTransitions?.includes(s)).map((s) => <option key={s} value={s}>{ORDER_STATUS_LABEL[s]}</option>)}
             </select>
             <p className="mt-1.5 text-xs text-muted-foreground">Dùng nút Hủy đơn bên dưới để hủy — thao tác đó sẽ hoàn kho và hoàn lượt voucher.</p>
           </section>
 
           <form onSubmit={saveShipping} className="rounded-lg border border-border p-4">
             <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold"><Truck className="size-4" /> Vận chuyển</h3>
+            <p className="mb-3 text-xs">Theo dõi do nhân viên cập nhật thủ công, chưa kết nối hãng vận chuyển.</p>
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
                 <Label htmlFor="o-carrier">Đơn vị vận chuyển</Label>
@@ -711,6 +730,13 @@ function AdminOrderDialog({ orderId, onClose, onChanged }: { orderId: string; on
                 <Input id="o-tracking" name="trackingNumber" defaultValue={order.shipping?.trackingNumber} className="mt-2" />
               </div>
             </div>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <label>Ngày giao dự kiến<input name="estimatedDeliveryAt" type="date" className="block w-full border p-2" defaultValue={order.shipping?.estimatedDeliveryAt?.slice(0,10)||''}/></label>
+              <label>Thời gian bàn giao<input name="handedOverAt" type="datetime-local" className="block w-full border p-2"/></label>
+              <label>Mốc vận chuyển<select name="milestone" className="block w-full border p-2" defaultValue={order.shipping?.milestone||'prepared'}>{[['prepared','Chuẩn bị'],['in_transit','Đang vận chuyển'],['delayed','Giao chậm'],['delivery_failed','Giao chưa thành công'],['return_to_sender','Đang hoàn về người gửi'],['returned_to_sender','Đã hoàn về người gửi']].map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></label>
+              <label>Ghi chú hiển thị cho khách<input name="customerNote" maxLength={300} className="block w-full border p-2" defaultValue={order.shipping?.customerNote||''}/></label>
+            </div>
+            <label className="mt-3 block">Lý do sửa vận đơn đã bàn giao<input name="correctionReason" className="block w-full border p-2" maxLength={300}/></label>
             <Button type="submit" size="sm" className="mt-3" disabled={busy}>Lưu thông tin vận chuyển</Button>
           </form>
 
@@ -909,7 +935,7 @@ function ReturnDetailDialog({
           <ul className="space-y-2 text-sm">
             {ret.items.map((item) => (
               <li key={item.variantId} className="flex items-center gap-3">
-                <img src={item.img} alt="" width={36} height={46} className="h-11 w-9 rounded border border-border object-cover" />
+                <PrivateImage src={item.img} alt="" width={36} height={46} className="h-11 w-9 rounded border border-border object-cover" />
                 <span className="flex-1">{item.title} <span className="text-muted-foreground">({item.color}/{item.size}) × {item.qty}</span></span>
                 <span>{money(item.price * item.qty)}</span>
               </li>
@@ -922,9 +948,7 @@ function ReturnDetailDialog({
             <h3 className="mb-2 text-sm font-semibold">Ảnh minh chứng</h3>
             <div className="flex flex-wrap gap-2">
               {ret.photos.map((src) => (
-                <a key={src} href={src} target="_blank" rel="noopener noreferrer">
-                  <img src={src} alt="Ảnh minh chứng" className="size-24 rounded border border-border object-cover transition-opacity hover:opacity-80" />
-                </a>
+                <PrivateImage key={src} src={src} alt="Ảnh minh chứng" className="size-24 rounded border border-border object-cover transition-opacity hover:opacity-80" />
               ))}
             </div>
           </section>
@@ -1502,8 +1526,11 @@ function UsersView({ currentId }: { currentId: string }) {
             {(list ?? []).map((u) => (
               <tr key={u.id} className="border-b border-border last:border-0">
                 <td className="px-3.5 py-2.5 font-medium">
-                  {u.name}
-                  {u.id === currentId && <span className="ml-2 text-xs text-muted-foreground">(bạn)</span>}
+                  <span className="flex items-center gap-2.5">
+                    <AvatarGlyph avatarId={u.avatarId} size={26} />
+                    {u.name}
+                    {u.id === currentId && <span className="text-xs text-muted-foreground">(bạn)</span>}
+                  </span>
                 </td>
                 <td className="px-3.5 py-2.5">{u.email}</td>
                 <td className="px-3.5 py-2.5">
@@ -1566,7 +1593,8 @@ function EmailsView() {
 
   return (
     <>
-      <h2 className="mb-2 font-display text-lg font-bold uppercase">Email đã gửi</h2>
+      <h2 className="mb-2 font-display text-lg font-bold uppercase">Email hệ thống</h2>
+      <Button variant="outline" size="sm" onClick={()=>void api.get<MailRecord[]>('/api/admin/emails').then(setList)}>Làm mới trạng thái gửi</Button>
       <p className="mb-4 text-sm text-muted-foreground">
         Toàn bộ email hệ thống phát ra. Khi chưa cấu hình SMTP, email được lưu tại đây thay vì gửi ra ngoài.
       </p>
@@ -1598,7 +1626,7 @@ function EmailsView() {
                 </td>
                 <td className="px-3.5 py-2.5">
                   <Badge variant={m.status === "sent" ? "success" : "destructive"}>
-                    {m.status === "sent" ? (m.mode === "smtp" ? "Đã gửi" : "Hộp thư nội bộ") : "Lỗi"}
+                    {m.status === "sent" ? (m.mode === "smtp" ? "Đã gửi" : "Hộp thư nội bộ") : m.status === 'pending' ? 'Đang chờ gửi / thử lại' : "Lỗi — cần đối soát"}
                   </Badge>
                 </td>
                 <td className="px-3.5 py-2.5 whitespace-nowrap">{new Date(m.createdAt).toLocaleString("vi-VN")}</td>
@@ -1631,6 +1659,172 @@ function EmailsView() {
           )}
         </Dialog>
       )}
+    </>
+  );
+}
+
+/* ==================== THU TIỀN POS (VIETQR) ==================== */
+
+interface PosRow {
+  id: string;
+  customerEmail: string;
+  total: number;
+  status: string;
+  createdAt: string;
+  reference: string;
+  requestedAt: string | null;
+  expiresAt: string | null;
+  expired: boolean;
+}
+
+interface PosQr {
+  payload: string;
+  content: string;
+  amount: number;
+  bank: { bin: string; accountNo: string; accountName: string };
+  image: string;
+  expiresAt: string;
+}
+
+/**
+ * Quầy thu tiền: danh sách đơn đang chờ chuyển khoản + mã QR của từng đơn.
+ * Nhân viên xem tiền đã về tài khoản ngân hàng rồi mới bấm xác nhận.
+ */
+function PosView() {
+  const toast = useToast();
+  const [rows, setRows] = useState<PosRow[] | null>(null);
+  const [config, setConfig] = useState<{ enabled: boolean; configured: boolean; accountNo: string | null; accountName: string | null; bankName: string | null; bankBin: string | null } | null>(null);
+  const [qr, setQr] = useState<PosQr | null>(null);
+  const [activeId, setActiveId] = useState("");
+  const [bankTxn, setBankTxn] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    try {
+      const data = await api.get<{ rows: PosRow[]; config: typeof config }>("/api/payment/vietqr/pending");
+      setRows(data.rows);
+      setConfig(data.config);
+      setError("");
+    } catch (e) {
+      setRows([]);
+      setError(e instanceof ApiError ? e.message : "Không tải được danh sách chờ thu tiền");
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  async function showQr(row: PosRow) {
+    setBusy(true);
+    setActiveId(row.id);
+    setBankTxn("");
+    setError("");
+    try {
+      setQr(await api.post<PosQr>("/api/payment/vietqr/create", { orderId: row.id }));
+    } catch (e) {
+      setQr(null);
+      setError(e instanceof ApiError ? e.message : "Không tạo được mã QR");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirm(row: PosRow) {
+    if (bankTxn.trim().length < 4) {
+      toast.error("Nhập mã giao dịch ngân hàng để đối soát trước khi xác nhận");
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await api.post<{ alreadyPaid: boolean }>("/api/payment/vietqr/confirm", {
+        orderId: row.id,
+        bankTransactionNo: bankTxn.trim(),
+        amount: row.total,
+      });
+      toast.success(result.alreadyPaid ? `Đơn ${row.id} đã được xác nhận trước đó` : `Đã xác nhận nhận ${money(row.total)} cho đơn ${row.id}`);
+      setQr(null);
+      setActiveId("");
+      setBankTxn("");
+      await load();
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Không xác nhận được thanh toán");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const active = rows?.find((r) => r.id === activeId) || null;
+
+  return (
+    <>
+      <h2 className="mb-2 font-display text-lg font-bold uppercase">Thu tiền tại quầy</h2>
+      <p className="mb-4 text-sm text-muted-foreground">
+        Đơn chờ chuyển khoản VietQR, cũ nhất trước. Mở mã QR cho khách quét, kiểm tra tiền đã về tài khoản rồi mới xác nhận.
+      </p>
+
+      {config && !config.configured && (
+        <div className="mb-4 rounded-lg border border-warning/50 bg-amber-50 p-4 text-sm text-amber-900">
+          Chưa khai báo tài khoản nhận tiền. Thêm <code className="rounded bg-amber-100 px-1">VIETQR_BANK_BIN</code>,{" "}
+          <code className="rounded bg-amber-100 px-1">VIETQR_ACCOUNT_NO</code>, <code className="rounded bg-amber-100 px-1">VIETQR_ACCOUNT_NAME</code> vào file <code>.env</code> rồi khởi động lại server.
+        </div>
+      )}
+      {config?.configured && (
+        <p className="mb-4 rounded-lg border border-border bg-card p-3 text-sm">
+          Nhận tiền về: <b>{config.bankName || `BIN ${config.bankBin}`}</b> · <b>{config.accountNo}</b> · {config.accountName}
+        </p>
+      )}
+
+      {error && <p role="alert" className="mb-3 rounded border border-destructive/40 bg-red-50 p-3 text-sm text-red-800">{error}</p>}
+      <Button variant="outline" size="sm" className="mb-4" onClick={() => void load()}><RefreshCcw /> Làm mới</Button>
+
+      {!rows && <p className="text-sm text-muted-foreground">Đang tải…</p>}
+      {rows?.length === 0 && <p className="text-sm text-muted-foreground">Không có đơn nào chờ thu tiền.</p>}
+
+      <div className="space-y-3">
+        {rows?.map((row) => (
+          <article key={row.id} className={cn("rounded-lg border bg-card p-4", activeId === row.id && "border-brand")}>
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <h3 className="font-display font-bold">Đơn {row.id}</h3>
+                <p className="text-sm text-muted-foreground">{row.customerEmail} · {money(row.total)}</p>
+                <p className="text-xs text-muted-foreground">
+                  Nội dung: <b>{row.reference}</b> · tạo lúc {new Date(row.createdAt).toLocaleString("vi-VN")}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {row.expired && <Badge variant="warning">Mã đã hết hạn — tạo lại</Badge>}
+                <Button size="sm" variant="outline" disabled={busy} onClick={() => void showQr(row)}>
+                  {activeId === row.id && qr ? "Làm mới mã QR" : "Hiện mã QR"}
+                </Button>
+              </div>
+            </div>
+
+            {activeId === row.id && qr && (
+              <div className="mt-4 grid gap-4 sm:grid-cols-[220px_1fr]">
+                <img src={qr.image} alt={`Mã VietQR đơn ${row.id}`} className="mx-auto size-52 rounded border border-border bg-white p-2" />
+                <div className="space-y-2 text-sm">
+                  <p>Quét bằng app ngân hàng. Số tiền <b>{money(qr.amount)}</b>, nội dung <b>{qr.content}</b>.</p>
+                  <div className="flex flex-wrap gap-2">
+                    <Input
+                      aria-label="Mã giao dịch ngân hàng"
+                      placeholder="Mã giao dịch / FT ngân hàng"
+                      value={bankTxn}
+                      maxLength={64}
+                      onChange={(e) => setBankTxn(e.target.value)}
+                    />
+                    <Button disabled={busy} onClick={() => void confirm(row)}><Banknote /> Xác nhận đã nhận tiền</Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Chỉ bấm sau khi đã thấy tiền vào tài khoản. Thao tác được ghi lịch sử kèm tên nhân viên.
+                  </p>
+                </div>
+              </div>
+            )}
+          </article>
+        ))}
+      </div>
+
+      {active && !qr && <p className="mt-3 text-sm text-muted-foreground">Đơn {active.id} đang chờ mã QR…</p>}
     </>
   );
 }

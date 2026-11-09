@@ -1,0 +1,8 @@
+import { useEffect,useState } from 'react';
+import { api } from '@/lib/api';
+import { Button } from './ui/button';
+type ModeratedReview={id:string;rating:number;comment:string;moderationStatus:string;history:{reason:string;status:string;at:string}[]};
+export function ReviewModeration(){const [reviews,setReviews]=useState<ModeratedReview[]>([]),[reason,setReason]=useState(''),[error,setError]=useState('');
+  const load=()=>api.get<ModeratedReview[]>('/api/admin/reviews').then(setReviews).catch(e=>setError(e.message));useEffect(()=>{void load();},[]);
+  return <section className="space-y-4"><h2 className="text-2xl font-semibold">Kiểm duyệt đánh giá</h2><p>Chỉ xử lý spam, quấy rối hoặc nội dung vi phạm. Không ẩn đánh giá vì số sao thấp.</p><input aria-label="Lý do kiểm duyệt" className="w-full rounded border p-3" placeholder="Lý do kiểm duyệt bắt buộc" value={reason} onChange={e=>setReason(e.target.value)}/>{error&&<p role="alert">{error}</p>}{reviews.map(r=><article key={r.id} className="space-y-2 rounded border p-4"><p>{r.rating}/5 · {r.moderationStatus==='published'?'Đang hiển thị':'Đã ẩn'}</p><p>{r.comment}</p><Button variant="outline" disabled={reason.trim().length<3} onClick={async()=>{try{await api.put(`/api/admin/reviews/${r.id}/moderation`,{status:r.moderationStatus==='published'?'hidden':'published',reason});await load();}catch(e){setError((e as Error).message);}}}>{r.moderationStatus==='published'?'Ẩn nội dung':'Hiển thị lại'}</Button><details><summary>Lịch sử kiểm duyệt</summary>{r.history.map((h,i)=><p key={i}>{h.at} · {h.status} · {h.reason}</p>)}</details></article>)}</section>;
+}

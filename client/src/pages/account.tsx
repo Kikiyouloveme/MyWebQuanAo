@@ -9,6 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, ConfirmDialog } from "@/components/ui/dialog";
+import { AvatarPicker } from "@/components/ui/avatar-picker";
+import { AvatarGlyph } from "@/components/ui/avatar-glyph";
 import { useAuth } from "@/context/auth";
 import { useToast } from "@/context/toast";
 import { api, ApiError, type Address, type Order, type User } from "@/lib/api";
@@ -46,10 +48,13 @@ export default function Account() {
       {/* Thẻ thông tin */}
       <div className="rounded-lg border border-border bg-card p-5 shadow-sm sm:p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0">
-            <p className="font-display text-lg font-bold">{user.name}</p>
-            <p className="truncate text-sm text-muted-foreground">{user.email}</p>
-            {user.phone && <p className="text-sm text-muted-foreground">{user.phone}</p>}
+          <div className="flex min-w-0 items-center gap-3">
+            <AvatarGlyph avatarId={user.avatarId} size={48} className="border border-border" />
+            <div className="min-w-0">
+              <p className="font-display text-lg font-bold">{user.name}</p>
+              <p className="truncate text-sm text-muted-foreground">{user.email}</p>
+              {user.phone && <p className="text-sm text-muted-foreground">{user.phone}</p>}
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant={user.role === "customer" ? "secondary" : "brand"}>
@@ -61,6 +66,7 @@ export default function Account() {
             {["admin", "staff"].includes(user.role) && (
               <Button size="sm" variant="outline" asChild><Link to="/admin">Vào quản trị</Link></Button>
             )}
+            {user.role==='customer'&&<Button size="sm" variant="outline" asChild><Link to="/designs">Thiết kế của tôi</Link></Button>}
             <Button size="sm" variant="ghost" onClick={() => { logout(); navigate("/"); }}>
               <LogOut /> Đăng xuất
             </Button>
@@ -109,6 +115,7 @@ export default function Account() {
 function ProfileTab({ user, setUser }: { user: User; setUser: (u: User) => void }) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
+  const [avatarBusy, setAvatarBusy] = useState(false);
 
   async function save(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -128,7 +135,27 @@ function ProfileTab({ user, setUser }: { user: User; setUser: (u: User) => void 
     }
   }
 
+  async function selectAvatar(avatarId: number) {
+    if (avatarId === user.avatarId || avatarBusy) return;
+    setAvatarBusy(true);
+    try {
+      const updated = await api.put<User>("/api/auth/avatar", { avatarId });
+      setUser(updated);
+      toast.success("Đã đổi ảnh đại diện");
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Không đổi được ảnh đại diện");
+    } finally {
+      setAvatarBusy(false);
+    }
+  }
+
   return (
+    <div className="space-y-6">
+      <section className="max-w-lg rounded-lg border border-border bg-card p-5 shadow-sm sm:p-6">
+        <h2 className="mb-4 font-display text-base font-bold uppercase">Ảnh đại diện</h2>
+        <AvatarPicker value={user.avatarId} onSelect={selectAvatar} busy={avatarBusy} />
+      </section>
+
     <form onSubmit={save} className="max-w-lg space-y-5 rounded-lg border border-border bg-card p-5 shadow-sm sm:p-6" noValidate>
       <h2 className="font-display text-base font-bold uppercase">Thông tin cá nhân</h2>
 
@@ -150,6 +177,7 @@ function ProfileTab({ user, setUser }: { user: User; setUser: (u: User) => void 
 
       <Button disabled={busy}>{busy ? <><Loader2 className="animate-spin" /> Đang lưu…</> : "Lưu thay đổi"}</Button>
     </form>
+    </div>
   );
 }
 

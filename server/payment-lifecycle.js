@@ -132,6 +132,7 @@ function expireOrder(order, addHistory, STATUS) {
 
   inventory.release(order, 'Hết hạn thanh toán');
   releaseVoucher(order);
+  require('./custom-print').sync(order);
   return true;
 }
 

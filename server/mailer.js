@@ -16,11 +16,14 @@ const PUBLIC_URL = config.publicUrl;
 let transporter = null;
 function getTransport() {
   if (transporter !== null) return transporter;
-  if (process.env.SMTP_HOST && process.env.SMTP_USER) {
+  if (config.features.smtpConfigured) {
     transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
       port: Number(process.env.SMTP_PORT || 587),
       secure: Number(process.env.SMTP_PORT) === 465,
+      connectionTimeout: 15000,
+      greetingTimeout: 15000,
+      socketTimeout: 60000,
       auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
     });
   } else {
@@ -126,6 +129,15 @@ const TEMPLATES = {
       ${btn(PUBLIC_URL + '/shop', 'Khám phá bộ sưu tập')}`),
   }),
 
+  guestCheckout: (contact, code) => ({
+    subject: 'Mã xác minh đặt hàng — VELATHIER',
+    html: shell('Xác minh email đặt hàng', `
+      <h1 style="font-size:22px">Xác minh email đặt hàng</h1>
+      <p>Xin chào ${esc(contact.fullName)}, nhập mã dưới đây để đặt hàng không cần tài khoản.</p>
+      ${otpBlock(code)}
+      <p>Nếu bạn không yêu cầu đặt hàng, hãy bỏ qua email này. Không chia sẻ mã với người khác.</p>`),
+  }),
+
   verifyEmail: (user, code) => ({
     subject: `Mã xác minh email — VELATHIER`,
     html: shell('Xác minh email', `
@@ -178,7 +190,7 @@ const TEMPLATES = {
       </p>
       ${itemsTable(order)}
       ${addressBlock(order.shippingAddress)}
-      ${btn(PUBLIC_URL + '/orders/' + order.id, 'Theo dõi đơn hàng')}`),
+      ${order.userId ? btn(PUBLIC_URL + '/orders/' + order.id, 'Theo dõi đơn hàng') : `<p>Vui lòng giữ mã đơn <b>${esc(order.id)}</b> và liên hệ cửa hàng khi cần hỗ trợ.</p>${btn(PUBLIC_URL + '/contact', 'Liên hệ cửa hàng')}`}`),
   }),
 
   paymentSuccess: (order) => ({
@@ -206,6 +218,10 @@ const TEMPLATES = {
       ${btn(PUBLIC_URL + '/payment/' + order.id, 'Thanh toán lại')}`),
   }),
 
+  customEvent: (event) => ({
+    subject: `VELATHIER — cập nhật đơn ${event.orderId}`,
+    html: shell('Cập nhật in theo yêu cầu', `<h1>Đơn ${esc(event.orderId)}</h1><p>${esc(event.message)}</p>${btn(PUBLIC_URL + '/orders/' + encodeURIComponent(event.orderId), 'Xem mẫu in và đơn hàng')}`),
+  }),
   orderStatus: (order) => ({
     subject: `Cập nhật đơn ${order.id}: ${STATUS_TEXT[order.status] || order.status}`,
     html: shell('Cập nhật đơn hàng', `
@@ -279,13 +295,14 @@ const TEMPLATES = {
  * vì nhân viên/quản trị viên đọc được hộp thư sẽ chiếm được tài khoản khách hàng.
  * Ở môi trường phát triển vẫn lưu để bộ kiểm thử đọc được mã.
  */
-const SENSITIVE_TEMPLATES = new Set(['verifyEmail', 'resetPassword']);
+const SENSITIVE_TEMPLATES = new Set(['verifyEmail', 'resetPassword', 'guestCheckout']);
 
 /**
  * Gửi email. Không bao giờ throw — lỗi gửi mail không được làm hỏng luồng nghiệp vụ.
  * @returns {Promise<{ok: boolean, mode: 'smtp'|'outbox', error?: string}>}
  */
 async function send(to, template, ...args) {
+  if(isLive()&&!db.status().transactions)throw new Error('SMTP thật cần MongoDB replica set để bảo đảm outbox được commit cùng nghiệp vụ');
   const tpl = TEMPLATES[template];
   if (!tpl || !to) return { ok: false, mode: 'outbox', error: 'Thiếu template hoặc người nhận' };
 
@@ -307,21 +324,18 @@ async function send(to, template, ...args) {
     sensitive,
     template,
     mode: isLive() ? 'smtp' : 'outbox',
-    status: 'sent',
+    status: isLive() ? 'pending' : 'sent',
     createdAt: new Date().toISOString(),
   };
 
-  try {
-    const t = getTransport();
-    if (t) await t.sendMail({ from: FROM, to, subject, html });
-  } catch (e) {
-    record.status = 'failed';
-    record.error = e.message;
-    console.error('[mail] Gửi thất bại:', e.message);
+  const eventKey = template === 'customEvent' ? `event:${args[0].eventKey}` : record.id;
+  if (isLive()) {
+    const outbox=db.load().mailOutbox;
+    if(outbox.some(m=>m.eventKey===eventKey))return {ok:true,mode:'smtp',queued:true};
+    outbox.push({id:db.uid('outbox'),eventKey,emailId:record.id,status:'pending',attempts:0,nextAttemptAt:Date.now(),payload:require('./outbox-worker').seal({from:FROM,to,subject,html}),createdAt:record.createdAt});
   }
-
-  try { db.emails.insert(record); } catch { /* không chặn luồng chính */ }
-  return { ok: record.status === 'sent', mode: record.mode, error: record.error };
+  db.emails.insert(record);
+  return { ok: true, mode: record.mode, queued: isLive() };
 }
 
-module.exports = { send, isLive, TEMPLATES, STATUS_TEXT, SENSITIVE_TEMPLATES };
+module.exports = { send: (...args) => db.track(send(...args)), deliver: payload => getTransport().sendMail(payload), isLive, TEMPLATES, STATUS_TEXT, SENSITIVE_TEMPLATES };

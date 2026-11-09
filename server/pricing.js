@@ -71,7 +71,7 @@ function computeDiscount(voucher, subtotal) {
  * @param {Array<{productId, variantId?, color?, size?, qty}>} cartItems
  * @returns {{lines: Array, subtotal: number}}
  */
-function buildLines(cartItems) {
+function buildLines(cartItems, user) {
   if (!Array.isArray(cartItems) || !cartItems.length) throw badRequest('Giỏ hàng trống');
   if (cartItems.length > 50) throw badRequest('Giỏ hàng có quá nhiều sản phẩm');
 
@@ -100,10 +100,16 @@ function buildLines(cartItems) {
       );
 
     // Giá lấy từ DB — client không thể can thiệp
-    const unitPrice = product.price;
+    if (item.itemType && !['regular','custom'].includes(item.itemType)) throw badRequest('Loại dòng hàng không hợp lệ');
+    const custom = item.itemType === 'custom' || item.designRevisionId
+      ? require('./custom-print').customLine(item,user,product,variant) : { itemType:'regular' };
+    const unitPrice = custom.priceBreakdown?.unitTotal ?? product.price;
     subtotal += unitPrice * qty;
 
     lines.push({
+      ...custom,
+      basePrice:product.price,printFee:unitPrice-product.price,unitPrice,quantity:qty,lineTotal:unitPrice*qty,
+      lineId: db.uid('line'),
       productId: product.id,
       variantId: variant.id,
       sku: variant.sku,
@@ -113,7 +119,7 @@ function buildLines(cartItems) {
       price: unitPrice,
       compareAtPrice: product.compareAtPrice || null,
       qty,
-      img: product.img,
+      img: custom.designRevisionId ? (require('./custom-print').revision(custom.designRevisionId).previewUrl || product.img) : product.img,
     });
   }
 

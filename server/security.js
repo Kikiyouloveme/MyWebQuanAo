@@ -68,6 +68,7 @@ const makeLimiter = (windowMs, max, message) =>
   });
 
 const limiters = {
+  printUpload: makeLimiter(60*1000,20,'Bạn đã tải quá nhiều ảnh. Vui lòng đợi một phút.'),
   /** Đăng nhập: 10 lần / 15 phút */
   login: makeLimiter(15 * 60 * 1000, 10, 'Bạn đã thử đăng nhập quá nhiều lần. Vui lòng đợi 15 phút rồi thử lại.'),
   /** Đăng ký: 5 tài khoản / giờ / IP */
@@ -109,7 +110,8 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
 
 /** Handler lỗi cuối chuỗi — không bao giờ để lộ stack trace ra ngoài production */
 function errorHandler(err, _req, res, _next) {
-  const status = err.status || 500;
+  const status = err.code === 11000 ? 409 : ['ValidationError', 'CastError'].includes(err.name) ? 400 : err.status || 500;
+  if (err.code === 11000) err.message = 'Dữ liệu bị trùng (email, mã sản phẩm hoặc mã voucher).';
   if (status >= 500) {
     console.error('[VELATHIER] Lỗi máy chủ:', err);
   }
@@ -151,7 +153,7 @@ function resolveUser(req) {
     const payload = jwt.verify(token, config.jwtSecret);
     const user = db.users.byId(payload.id);
     // Token phát hành trước lần đổi mật khẩu gần nhất bị coi là hết hiệu lực
-    if (user && (payload.v || 0) >= (user.tokensValidFrom || 0)) return user;
+    if (user && !(config.isProd && (['u_demo','u_staff','u_admin'].includes(user.id) || user.disabled)) && (payload.v || 0) >= (user.tokensValidFrom || 0)) return user;
   } catch { /* token hỏng/hết hạn → coi như khách */ }
   return null;
 }

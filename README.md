@@ -1,109 +1,86 @@
-# VELATHIER
+# VELATHIER — SDN302
 
-Website thương mại điện tử thời trang — chuẩn bị cho vận hành bán hàng thật tại Việt Nam.
+Website thời trang phục vụ học phần backend Node.js, Express và MongoDB.
 
-**Stack:** React 18 · TypeScript · Tailwind CSS v4 · shadcn/ui · Express · JWT · VNPay · Nodemailer
+**Stack:** React · TypeScript · Express · MongoDB · Mongoose · JWT.
 
----
+## In áo theo yêu cầu (bổ sung)
 
-## Cài đặt & chạy
+Đã bổ sung Studio, upload artwork riêng tư, bản nháp/version, phí in phía server,
+Staff review → Customer proof → sản xuất/QC, vận chuyển, size và verified reviews.
 
-Lần đầu:
+```powershell
+npm.cmd run migrate:custom-print
+npm.cmd run seed:custom-demo
+npm.cmd run build
+npm.cmd start
+```
 
-```bash
+Chạy migration/demo khi chỉ có một writer; không dùng `seed` để reset DB đang có dữ liệu.
+Demo seed chỉ chạy development/outbox/VNPay sandbox. [Kịch bản demo](docs/DEMO_SCRIPT.md),
+[API](docs/CUSTOM_PRINT_API.md), [kiểm toán ban đầu](docs/CUSTOM_PRINT_GAP_ANALYSIS.md),
+[ma trận kiểm thử và giới hạn](docs/CUSTOM_PRINT_TEST_CASES.md),
+[bàn giao thay đổi](docs/CUSTOM_PRINT_CHANGELOG.md).
+
+Kiểm thử: `npm.cmd run test:custom-unit`, `npm.cmd run test:integration`.
+Ảnh mới là minh họa có nhãn; chưa có ảnh nhà cung cấp được cấp phép. Browser QA và
+dịch vụ thanh toán/SMTP/vận chuyển live chưa được kiểm chứng trong môi trường này.
+
+## Cài đặt và chạy
+
+Hướng dẫn chi tiết theo màn hình Compass: [MONGODB-SETUP](docs/MONGODB-SETUP.md).
+Đối chiếu slides và giới hạn phạm vi: [SDN302-ALIGNMENT](docs/SDN302-ALIGNMENT.md).
+
+Mở PowerShell tại thư mục project:
+
+```powershell
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 npm run setup
 ```
 
-Lệnh trên cài dependencies (server + client), tạo dữ liệu mẫu và build giao diện.
+Trong `.env`, cấu hình `MONGO_URI=mongodb://127.0.0.1:27017/velathier`.
+MongoDB Server phải đang chạy. Chọn **một** cách chuẩn bị database trống:
 
-Sau đó tạo file cấu hình:
+- `npm run seed`: tạo dữ liệu demo.
+- `npm run db:import-json`: chuyển dữ liệu schema v3 từ `server/data/db.json`, giữ nguyên file nguồn.
 
-```bash
-cp .env.example .env
-```
+Cả hai lệnh đều từ chối ghi vào database đã có dữ liệu.
 
-Chạy máy chủ:
-
-```bash
+```powershell
+npm run db:check
 npm start
 ```
 
-Mở http://localhost:5173
-
-### Các lệnh khác
+Mở <http://localhost:5173>. Kiểm tra <http://localhost:5173/api/health>.
 
 | Lệnh | Công dụng |
-|---|---|
-| `npm run build` | Build lại giao diện sau khi sửa code trong `client/src` |
-| `npm run seed` | Tạo lại dữ liệu mẫu (**ghi đè toàn bộ dữ liệu hiện có**) |
+| --- | --- |
+| `npm run setup` | Cài dependencies server/client và build; không seed dữ liệu |
+| `npm run build` | Build React |
 | `npm run typecheck` | Kiểm tra TypeScript |
-| `npm run test:api` | Chạy 142 test API (cần server đang chạy) |
+| `npm run db:check` | Kết nối MongoDB, hiện database và số lượng bản ghi |
+| `npm run test:integration` | Tự tạo database test riêng, chạy kiểm thử rồi dọn database test |
+| `npm run test:api` | Chế độ thủ công; cần server test đang chạy và MONGO_URI khớp |
 
-> **Lưu ý khi seed lại:** máy chủ giữ dữ liệu trong bộ nhớ, nên phải **tắt máy chủ
-> trước khi chạy `npm run seed`** rồi mới bật lại. Seed lúc máy chủ đang chạy sẽ khiến
-> file và bộ nhớ lệch nhau, dữ liệu mới bị ghi đè trở lại.
-
-### Chạy bộ kiểm thử
-
-```bash
-npm run seed
-```
-
-Rồi khởi động máy chủ và chạy:
-
-```bash
-npm run test:api
-```
-
-Bộ test tạo nhiều đơn hàng nên tiêu hao tồn kho. Muốn chạy lại từ đầu, lặp lại đúng
-thứ tự: tắt máy chủ → seed → bật máy chủ → chạy test.
-
-Rate limit sẽ chặn chính bộ test nếu để bật. Khi chạy test, đặt biến môi trường
-`DISABLE_RATE_LIMIT=1` cho máy chủ — biến này **bị bỏ qua hoàn toàn ở production**
-nên không thể dùng để tắt lớp bảo vệ trên môi trường thật.
-
-### Tài khoản mẫu
-
-Chỉ dùng cho môi trường phát triển — **đổi mật khẩu hoặc xóa trước khi lên production**.
-
-| Vai trò | Email | Mật khẩu |
-|---|---|---|
-| Admin | `admin@velathier.vn` | `admin123` |
-| Nhân viên | `staff@velathier.vn` | `staff123` |
-| Khách hàng | `khach@velathier.vn` | `khach123` |
-
----
+Tài khoản demo: `admin@velathier.vn / admin123`, `staff@velathier.vn / staff123`,
+`khach@velathier.vn / khach123`. Chỉ dùng trong môi trường học tập.
 
 ## Kiến trúc
 
-```
-├── server/                   Backend Express
-│   ├── config.js             Nạp & kiểm tra biến môi trường (phải require đầu tiên)
-│   ├── db.js                 Data-access layer — mọi truy cập dữ liệu đi qua đây
-│   ├── security.js           Security headers, rate limit, JWT, phân quyền, validate
-│   ├── pricing.js            Tính tiền: subtotal → voucher → phí ship → tổng
-│   ├── inventory.js          Tồn kho theo biến thể, reserve/release idempotent
-│   ├── otp.js                OTP 6 số, lưu dạng hash, dùng một lần
-│   ├── mailer.js             Template email + SMTP/hộp thư nội bộ
-│   ├── vnpay.js              Ký/xác thực HMAC-SHA512, tạo link, hoàn tiền
-│   ├── routes/               auth · products · orders · payment · vouchers · returns · admin
-│   ├── seed.js               Dữ liệu khởi tạo
-│   └── test-api.js           Bộ kiểm thử API
-├── client/                   Frontend React (đây là ứng dụng chạy thật)
-│   └── src/
-│       ├── components/ui/    shadcn/ui: button, input, label, badge, dialog…
-│       ├── components/auth/   Giao diện xác thực nền tối + ô nhập OTP
-│       ├── context/          auth · cart · toast
-│       ├── pages/            home, shop, product, checkout, payment, orders, account, admin…
-│       └── lib/              api client, meta SEO, tiện ích
-├── assets/img/               Ảnh sản phẩm và ảnh khách tải lên
-└── legacy/                   Mã HTML/CSS/JS cũ, KHÔNG còn được nạp lúc chạy
-```
+- `server/models/`: Mongoose schemas, validation, unique indexes và quan hệ.
+- `server/routes/`: HTTP paths, middleware xác thực/phân quyền.
+- `server/controllers/`: nhận request và trả response.
+- `server/db.js`: facade truy cập dữ liệu cho logic nghiệp vụ.
+- `server/mongo-store.js`: connection và unit of work, CRUD bằng Mongoose.
+- `server/pricing.js`, `inventory.js`, `otp.js`: service nghiệp vụ.
+- `client/src/`: giao diện React.
+- `postman/`: collection demo API theo bài học.
 
-Dữ liệu hiện lưu trong file JSON tại `server/data/db.json`. Toàn bộ truy cập dữ liệu
-đã đi qua `server/db.js`, nên khi chuyển sang PostgreSQL chỉ cần viết lại phần thân
-các hàm repository trong file đó — phần nghiệp vụ giữ nguyên. Schema có đánh version
-và tự migrate khi khởi động, có sao lưu trước khi nâng cấp.
+Dữ liệu chạy thật nằm trong MongoDB. JSON cũ chỉ dùng làm nguồn nhập một lần.
+Bản chuyển đổi dùng một process Node, đọc các collection mỗi request và chỉ ghi
+những document thay đổi. Standalone chưa đảm bảo atomicity nhiều document;
+replica set sẽ dùng transaction khi commit. Xem giới hạn đầy đủ trong hướng dẫn
+MongoDB trước khi triển khai ngoài môi trường demo.
 
 ---
 
@@ -127,7 +104,7 @@ Bỏ qua lớp giao diện cũng không truy cập được dữ liệu vì API 
 
 ## Quy tắc nghiệp vụ
 
-- **Thanh toán:** COD hoặc VNPay. Đặt hàng bắt buộc đăng nhập và đã xác minh email.
+- **Thanh toán:** COD hoặc VNPay. Khách đăng nhập cần xác minh email; checkout khách vãng lai dùng OTP riêng và chỉ hỗ trợ COD.
 - **Phí vận chuyển:** 40.000₫, miễn phí khi giá trị đơn **sau khi trừ voucher** đạt 750.000₫.
 - **Voucher:** chỉ giảm theo phần trăm, tối đa 1 mã mỗi đơn, áp dụng được cho cả hàng đang sale.
 - **Tồn kho:** riêng cho từng tổ hợp màu + size.
@@ -156,7 +133,7 @@ biến thể, số lượng và mã voucher — giá, giảm giá, phí ship, t�
 - Thông tin ngân hàng nhận hoàn tiền chỉ nhân viên xử lý mới xem được, không ghi log.
 - Lỗi máy chủ không lộ stack trace ở production.
 
-Chạy `npm run test:api` để kiểm chứng — bộ test bao phủ 142 trường hợp gồm giả mạo giá,
+Chạy `npm run test:integration` để kiểm chứng — bộ test bao phủ 142 trường hợp gồm giả mạo giá,
 giả mạo thanh toán, truy cập chéo đơn hàng, OTP hết hạn/tái sử dụng và tranh chấp tồn kho.
 
 ---
@@ -199,4 +176,9 @@ Lưu ý: ở production, **chưa có SMTP thì khách không nhận được mã
 - [ ] Cấu hình VNPay thật và khai báo IPN URL
 - [ ] Đổi mật khẩu hoặc xóa các tài khoản mẫu
 - [ ] Thay ảnh sản phẩm mockup (SVG) bằng ảnh thật qua Admin → Sản phẩm
-- [ ] Cân nhắc chuyển `server/db.js` sang PostgreSQL và sao lưu định kỳ
+- [ ] Tối ưu repository MongoDB, kiểm thử replica set, xử lý đồng thời nhiều process và sao lưu định kỳ
+# Cập nhật remediation V2
+
+Xem [VELATHIER_V2_REMEDIATION.md](docs/VELATHIER_V2_REMEDIATION.md) cho payment gate tất cả loại đơn, bản xuất PNG private, schema 5, replica transaction/conditional stock, storage S3, transactional outbox, bảo mật production và kiểm thử Playwright. Tài liệu này cập nhật kết quả/giới hạn mới hơn các tài liệu CUSTOM_PRINT ban đầu.
+
+Lệnh bổ sung: `npm.cmd run test:replica`, `npm.cmd run test:browser`, `npm.cmd run backup:private`, `npm.cmd run build:deployment`. Browser test cần `npm.cmd exec playwright -- install chromium`; replica test dùng mongod local riêng và có thể cấu hình `TEST_MONGOD_PATH`.

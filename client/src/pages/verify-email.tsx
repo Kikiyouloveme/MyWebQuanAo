@@ -44,14 +44,14 @@ export default function VerifyEmail() {
   async function sendCode(silent = false) {
     if (!silent) { setBusy(true); setError(""); }
     try {
-      await api.post("/api/auth/verify-email/send");
-      setNotice(`Mã xác minh đã được gửi tới ${user?.email}. Mã có hiệu lực trong 10 phút.`);
+      const delivery=await api.post<{mode:string;queued:boolean}>("/api/auth/verify-email/send");
+      setNotice(delivery.mode==='outbox'?'Máy chủ chưa cấu hình gửi email thật. Mã chỉ được lưu trong hộp thư thử nghiệm nội bộ, không gửi tới email của bạn. Cần cấu hình SMTP để nhận mã.':`Yêu cầu gửi mã tới ${user?.email} đã vào hàng đợi. Hãy kiểm tra hộp thư và thư rác; mã có hiệu lực 10 phút.`);
       setResendIn(60);
     } catch (err) {
       if (err instanceof ApiError && err.status === 429) {
         setNotice(err.message);
         setResendIn(60);
-      } else if (!silent) {
+      } else {
         setError(err instanceof ApiError ? err.message : "Không gửi được mã xác minh.");
       }
     } finally {
@@ -86,7 +86,7 @@ export default function VerifyEmail() {
   return (
     <AuthShell
       title="Xác minh email"
-      subtitle={`Nhập mã 6 chữ số đã gửi tới ${user.email} để kích hoạt tài khoản.`}
+      subtitle={`Xác minh địa chỉ ${user.email} bằng mã 6 chữ số.`}
       eyebrow={
         <span className="inline-flex items-center gap-2 rounded-full border border-zinc-700 px-3 py-1 text-xs text-zinc-400">
           <ShieldCheck className="size-3.5" /> Bắt buộc trước khi đặt hàng

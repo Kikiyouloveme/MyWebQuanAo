@@ -1,4 +1,5 @@
-import { Link, useNavigate } from "react-router-dom";
+import { lazy, Suspense, useState } from "react";
+import { Link } from "react-router-dom";
 import { Plus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useCart } from "@/context/cart";
@@ -6,17 +7,24 @@ import { useToast } from "@/context/toast";
 import { money } from "@/lib/utils";
 import type { Product } from "@/lib/api";
 
+// Tách riêng khỏi import tĩnh — trang chủ (Home) tải ProductCard ngay từ đầu (không
+// lazy) để có LCP nhanh, nên hộp thoại xem nhanh (nặng hơn: bảng size, chọn màu/size)
+// chỉ nên tải khi khách thực sự bấm nút "+".
+const ProductQuickView = lazy(() =>
+  import("@/components/product-quick-view").then((m) => ({ default: m.ProductQuickView }))
+);
+
 export function ProductCard({ p }: { p: Product }) {
   const { add } = useCart();
   const toast = useToast();
-  const navigate = useNavigate();
+  const [quickView, setQuickView] = useState(false);
 
   const soldOut = !p.inStock;
   const onSale = !!p.compareAtPrice && p.compareAtPrice > p.price;
   const off = onSale ? Math.round((1 - p.price / p.compareAtPrice!) * 100) : 0;
   const availableVariants = p.variants.filter((v) => v.stock > 0);
   // Chỉ thêm nhanh được khi sản phẩm có đúng một phiên bản; nhiều màu/size thì
-  // phải vào trang chi tiết để chọn, tránh thêm nhầm biến thể.
+  // mở hộp thoại xem nhanh để chọn, tránh thêm nhầm biến thể.
   const canQuickAdd = availableVariants.length === 1;
 
   function quickAdd() {
@@ -24,7 +32,7 @@ export function ProductCard({ p }: { p: Product }) {
       add(p, availableVariants[0]);
       toast.success(`Đã thêm ${p.title} vào giỏ`);
     } else {
-      navigate(`/product/${p.id}`);
+      setQuickView(true);
     }
   }
 
@@ -71,6 +79,12 @@ export function ProductCard({ p }: { p: Product }) {
           <span className={onSale ? "text-brand" : ""}>{money(p.price)}</span>
         </span>
       </div>
+
+      {quickView && (
+        <Suspense fallback={null}>
+          <ProductQuickView productId={p.id} onClose={() => setQuickView(false)} />
+        </Suspense>
+      )}
     </article>
   );
 }

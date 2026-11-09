@@ -5,7 +5,7 @@
   "description": "VELATHIER — website thương mại điện tử thời trang (React + Express + VNPay)",
   "main": "server/server.js",
   "engines": {
-    "node": ">=20"
+    "node": ">=20.19.0"
   },
   "scripts": {
     "start": "node server/server.js",
@@ -14,17 +14,45 @@
     "build": "npm --prefix client run build",
     "typecheck": "npm --prefix client run typecheck",
     "test:api": "node server/test-api.js",
-    "setup": "npm install && npm --prefix client install && npm run seed && npm run build"
+    "setup": "npm install && npm --prefix client install && npm run build",
+    "db:check": "node server/check-db.js",
+    "db:import-json": "node server/import-json.js",
+    "test:integration": "node server/test-integration.js",
+    "migrate:custom-print": "node server/migrate-custom-print.js",
+    "seed:custom-demo": "node server/seed-custom-demo.js",
+    "test:custom-unit": "node --test server/test-custom-unit.js server/test-cart-identity.mjs server/test-remediation-unit.js",
+    "media:gc": "node server/media-gc.js",
+    "test:browser": "node server/test-browser.js",
+    "test:replica": "node server/test-replica.js",
+    "backup:private": "node server/backup-private.js",
+    "build:deployment": "node server/build-deployment.js",
+    "mail:check": "node server/check-mail.js",
+    "migrate:print-srs": "node server/migrate-print-srs.js",
+    "test:print-srs-unit": "node --test server/test-print-srs-unit.js"
+  },
+  "overrides": {
+    "body-parser": "^1.20.9",
+    "proxy-addr": "^2.0.8",
+    "qs": "^6.17.1",
+    "ip-address": "^10.7.4"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1164.0",
     "bcryptjs": "^2.4.3",
-    "compression": "^1.8.1",
+    "compression": "^1.8.2",
+    "cors": "^2.8.6",
     "dotenv": "^17.4.2",
-    "express": "^4.19.2",
-    "express-rate-limit": "^8.6.2",
+    "express": "^4.22.3",
+    "express-rate-limit": "^8.7.3",
     "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.2",
-    "multer": "^1.4.5-lts.1",
-    "nodemailer": "^9.0.4"
+    "mongoose": "^8.24.8",
+    "multer": "^2.5.0",
+    "nodemailer": "^10.3.1",
+    "qrcode": "^1.5.4",
+    "sharp": "^0.35.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.0"
   }
 }

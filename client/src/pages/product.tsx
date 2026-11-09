@@ -1,3 +1,5 @@
+import { ProductReviews } from "@/components/product-reviews";
+import { CustomProduct } from "@/components/custom-product";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Minus, Plus, ShoppingBag, Truck, RefreshCcw, ShieldCheck } from "lucide-react";
@@ -62,6 +64,7 @@ export default function ProductPage() {
   }, [sizesForColor]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectedVariant = sizesForColor.find((v) => v.size === size) || null;
+  useEffect(() => { const media=product?.media?.find(m=>m.color===color);if(media)setImage(media.localPath); },[product,color]);
   const canAdd = !!selectedVariant && selectedVariant.stock > 0;
 
   if (error) {
@@ -89,7 +92,7 @@ export default function ProductPage() {
     );
   }
 
-  const gallery = [product.img, product.img2].filter((x, i, arr) => x && arr.indexOf(x) === i);
+  const gallery = (product.media?.filter(m=>m.color===color).map(m=>m.localPath)||[product.img,product.img2]).filter((x, i, arr) => x && arr.indexOf(x) === i);
   const onSale = !!product.compareAtPrice && product.compareAtPrice > product.price;
   const off = onSale ? Math.round((1 - product.price / product.compareAtPrice!) * 100) : 0;
 
@@ -113,7 +116,7 @@ export default function ProductPage() {
         {/* Ảnh */}
         <div>
           <div className="aspect-[3/4] overflow-hidden rounded bg-muted">
-            <img src={image} alt={product.title} width={600} height={800} fetchPriority="high" className="h-full w-full object-cover" />
+            <img src={image} alt={product.title} width={600} height={800} fetchPriority="high" decoding="async" onError={e=>{e.currentTarget.onerror=null;e.currentTarget.src='/assets/img/media-unavailable.svg';}} className="h-full w-full object-cover" />
           </div>
           {gallery.length > 1 && (
             <div className="mt-3 flex gap-2.5">
@@ -226,6 +229,7 @@ export default function ProductPage() {
           </div>
 
           {/* Cam kết */}
+          <CustomProduct product={product} variant={selectedVariant}/>
           <ul className="mt-7 space-y-2.5 border-t border-border pt-6 text-sm text-muted-foreground">
             <li className="flex items-center gap-2.5"><Truck className="size-4 shrink-0 text-brand" /> Miễn phí vận chuyển cho đơn từ 750.000₫</li>
             <li className="flex items-center gap-2.5"><RefreshCcw className="size-4 shrink-0 text-brand" /> Đổi sang món cùng giá trị hoặc trả hàng trong 7 ngày</li>
@@ -239,6 +243,7 @@ export default function ProductPage() {
           )}
         </div>
       </div>
+      <ProductReviews productId={product.id} />
     </div>
   );
 }

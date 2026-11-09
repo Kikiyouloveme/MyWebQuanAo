@@ -1,36 +1,107 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { CheckCircle2, XCircle, ShieldAlert, Loader2, Package } from "lucide-react";
+import { CheckCircle2, XCircle, ShieldAlert, Loader2, Package, Copy, QrCode, RefreshCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { api, ApiError, type Order } from "@/lib/api";
 import { money } from "@/lib/utils";
+import { useCart } from "@/context/cart";
+import { useToast } from "@/context/toast";
+
+/** Kết quả trả về khi tạo mã QR chuyển khoản */
+interface VietQrInfo {
+  payload: string;
+  content: string;
+  amount: number;
+  bank: { bin: string; accountNo: string; accountName: string; accountType: string };
+  image: string;
+  expiresAt: string;
+  ttlMinutes: number;
+}
 
 export default function Payment() {
+  const {items,setQty}=useCart();
+  const toast = useToast();
   const { orderId } = useParams();
   const [params] = useSearchParams();
   const cod = params.get("cod") === "1";
+  const vietqrRequested = params.get("vietqr") === "1";
   const vnp = params.get("vnp"); // paid | failed | invalid | notfound
 
   const [order, setOrder] = useState<Order | null>(null);
   const [error, setError] = useState("");
   const [redirecting, setRedirecting] = useState(false);
+  const [qr, setQr] = useState<VietQrInfo | null>(null);
+  const [qrError, setQrError] = useState("");
+  const [qrLoading, setQrLoading] = useState(false);
 
-  useEffect(() => {
-    if (vnp === "invalid" || vnp === "notfound") return;
-    api.get<Order>("/api/orders/" + orderId)
+  useEffect(()=>{
+    if(order?.payStatus!=='paid'||!order.userId)return;
+    const key=`vela-checkout:${order.userId}`;
+    try{const pending=JSON.parse(sessionStorage.getItem(key)||'null');if(pending?.orderId!==order.id)return;sessionStorage.removeItem(key);
+      for(const line of order.items){const cartItem=items.find(i=>i.variantId===line.variantId&&i.designRevisionId===line.designRevisionId);if(cartItem)setQty(cartItem.key,Math.max(0,cartItem.qty-line.qty));}
+    }catch{/* Storage disabled: keep cart available rather than discard unknown changes. */}
+  },[order,items,setQty]);
+
+  const loadOrder = useCallback(() => {
+    if (vnp === "invalid" || vnp === "notfound") return Promise.resolve();
+    return api.get<Order>("/api/orders/" + orderId)
       .then(setOrder)
       .catch((e) => setError(e instanceof ApiError ? e.message : "Không tải được đơn hàng"));
   }, [orderId, vnp]);
 
+  useEffect(() => { void loadOrder(); }, [loadOrder]);
+
+  const createQr = useCallback(async () => {
+    setQrLoading(true);
+    setQrError("");
+    try {
+      const info = await api.post<VietQrInfo>("/api/payment/vietqr/create", { orderId });
+      setQr(info);
+    } catch (err) {
+      setQrError(err instanceof ApiError ? err.message : "Không tạo được mã chuyển khoản");
+    } finally {
+      setQrLoading(false);
+    }
+  }, [orderId]);
+
+  // Đơn đang chờ chuyển khoản: tạo mã ngay, không cần khách bấm thêm
+  useEffect(() => {
+    if (!order || order.payMethod !== "vietqr" || order.payStatus === "paid") return;
+    if (!vietqrRequested && !["pending"].includes(order.status)) return;
+    void createQr();
+    // Chỉ tạo lại khi đơn hoặc cờ URL thay đổi, tránh vòng lặp do createQr đổi tham chiếu
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [order?.id, order?.payStatus, order?.payMethod, vietqrRequested]);
+
+  // Trong lúc chờ cửa hàng xác nhận, tự kiểm tra lại trạng thái mỗi 10 giây
+  useEffect(() => {
+    if (!order || order.payMethod !== "vietqr" || order.payStatus === "paid") return;
+    if (["cancelled", "refunded", "refund_pending"].includes(order.status)) return;
+    const timer = setInterval(() => { void loadOrder(); }, 10000);
+    return () => clearInterval(timer);
+  }, [order, loadOrder]);
+
   async function payAgain() {
+    setError('');
     setRedirecting(true);
     try {
       const { url } = await api.post<{ url: string }>("/api/payment/vnpay/create", { orderId });
       window.location.href = url;
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Không tạo được liên kết thanh toán");
+      const message = err instanceof ApiError ? err.message : "Không tạo được liên kết thanh toán";
+      setError(message);
+      toast.error(message);
       setRedirecting(false);
+    }
+  }
+
+  async function copy(text: string, label: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(`Đã sao chép ${label}`);
+    } catch {
+      toast.error("Trình duyệt không cho phép sao chép tự động. Vui lòng chọn và sao chép thủ công.");
     }
   }
 
@@ -52,7 +123,7 @@ export default function Payment() {
     );
   }
 
-  if (error) {
+  if (error && !order) {
     return (
       <Shell>
         <h1 className="font-display text-xl font-bold uppercase">{error}</h1>
@@ -105,7 +176,8 @@ export default function Payment() {
         <Badge variant="success" className="mb-4">Đã thanh toán</Badge>
         {info}
         <p className="mt-6 flex items-center justify-center gap-2 font-medium text-emerald-700">
-          <CheckCircle2 className="size-5" /> Thanh toán thành công qua VNPay
+          <CheckCircle2 className="size-5" />
+          {order.payMethod === "vietqr" ? "Cửa hàng đã xác nhận chuyển khoản" : "Thanh toán thành công qua VNPay"}
         </p>
         {order.payment?.transactionNo && (
           <p className="mt-2 text-sm text-muted-foreground">
@@ -118,7 +190,50 @@ export default function Payment() {
     );
   }
 
-  /* --- Thất bại hoặc chờ thanh toán --- */
+  /* --- VietQR: hiện mã chuyển khoản, chờ cửa hàng xác nhận --- */
+  if (order.payMethod === "vietqr") {
+    return (
+      <Shell>
+        <Badge variant="warning" className="mb-4">Chờ chuyển khoản</Badge>
+        {info}
+        {qrLoading && !qr && <p className="mt-6 flex items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" /> Đang tạo mã QR…</p>}
+        {qrError && (
+          <div className="mt-6 rounded-lg border border-destructive/40 bg-red-50 p-4 text-sm text-red-800">
+            <p>{qrError}</p>
+            <Button variant="outline" size="sm" className="mt-3" onClick={() => void createQr()}><RefreshCcw /> Thử tạo lại mã</Button>
+          </div>
+        )}
+        {qr && (
+          <>
+            <div className="mt-6 flex flex-col items-center">
+              <img src={qr.image} alt={`Mã VietQR chuyển khoản ${money(qr.amount)} cho đơn ${order.id}`} className="size-64 rounded-lg border border-border bg-white p-2" />
+              <p className="mt-3 text-xs text-muted-foreground">Quét mã bằng app ngân hàng bất kỳ (VietQR / NAPAS 247)</p>
+            </div>
+            <dl className="mt-5 space-y-2 rounded-lg border border-border bg-secondary/50 p-4 text-left text-sm">
+              <Row label="Ngân hàng" value={qr.bank.accountNo ? `BIN ${qr.bank.bin}` : "—"} onCopy={undefined} />
+              <Row label="Số tài khoản" value={qr.bank.accountNo} onCopy={() => void copy(qr.bank.accountNo, "số tài khoản")} />
+              <Row label="Chủ tài khoản" value={qr.bank.accountName} onCopy={undefined} />
+              <Row label="Số tiền" value={money(qr.amount)} onCopy={() => void copy(String(qr.amount), "số tiền")} />
+              <Row label="Nội dung" value={qr.content} onCopy={() => void copy(qr.content, "nội dung chuyển khoản")} />
+            </dl>
+            <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+              Chuyển đúng <b className="text-foreground">{money(qr.amount)}</b> và ghi đúng nội dung <b className="text-foreground">{qr.content}</b> để cửa hàng đối soát.
+              Sau khi tiền về, nhân viên sẽ xác nhận và đơn chuyển sang trạng thái đã thanh toán.
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Mã có hiệu lực {qr.ttlMinutes} phút · tự kiểm tra lại trạng thái mỗi 10 giây.
+            </p>
+            <div className="mt-4 flex flex-wrap justify-center gap-2">
+              <Button variant="outline" onClick={() => void loadOrder()}><RefreshCcw /> Tôi đã chuyển khoản</Button>
+              <Button variant="ghost" asChild><Link to={`/orders/${order.id}`}>Xem đơn</Link></Button>
+            </div>
+          </>
+        )}
+      </Shell>
+    );
+  }
+
+  /* --- Thất bại hoặc chờ thanh toán VNPay --- */
   const failed = order.payStatus === "failed" || vnp === "failed";
   return (
     <Shell>
@@ -139,13 +254,35 @@ export default function Payment() {
           </p>
         </>
       )}
+      {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
       <div className="mt-6 grid gap-2.5">
         <Button variant="brand" onClick={payAgain} disabled={redirecting}>
-          {redirecting ? <><Loader2 className="animate-spin" /> Đang chuyển hướng…</> : "Thanh toán qua VNPay"}
+          {redirecting ? <><Loader2 className="animate-spin" /> Đang chuyển hướng…</> : <><QrCode /> Thanh toán qua VNPay</>}
         </Button>
+        {error && (
+          <Button variant="outline" onClick={payAgain} disabled={redirecting}>
+            Thử lại thanh toán trên đơn này
+          </Button>
+        )}
         <Button variant="outline" asChild><Link to={`/orders/${order.id}`}>Để sau</Link></Button>
       </div>
     </Shell>
+  );
+}
+
+function Row({ label, value, onCopy }: { label: string; value: string; onCopy?: () => void }) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <dt className="shrink-0 text-muted-foreground">{label}</dt>
+      <dd className="flex items-center gap-1.5 text-right font-medium">
+        <span className="break-all">{value}</span>
+        {onCopy && (
+          <button onClick={onCopy} aria-label={`Sao chép ${label.toLowerCase()}`} className="shrink-0 cursor-pointer rounded p-1 text-muted-foreground hover:text-foreground">
+            <Copy className="size-3.5" />
+          </button>
+        )}
+      </dd>
+    </div>
   );
 }
 

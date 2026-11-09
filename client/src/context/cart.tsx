@@ -1,11 +1,18 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { CART_KEY, type Product, type Variant } from "@/lib/api";
+import { cartLineKey } from '@/lib/cart-identity';
 
 /**
  * Giỏ hàng lưu ở localStorage. Chỉ giữ thông tin nhận dạng và số lượng —
  * giá hiển thị ở đây chỉ để xem trước, khi đặt hàng server luôn tính lại từ database.
  */
 export interface CartItem {
+  printSummary?:string;
+  basePrice?:number;
+  printFee?:number;
+  itemType?: 'regular' | 'custom';
+  designRevisionId?: string;
+  qualityAcknowledged?: boolean;
   key: string;        // = variantId, một biến thể chỉ có một dòng trong giỏ
   productId: string;
   variantId: string;
@@ -25,6 +32,7 @@ interface CartCtx {
   open: boolean;
   setOpen: (v: boolean) => void;
   add: (product: Product, variant: Variant, qty?: number) => void;
+  addCustom: (product: Product, variant: Variant, revisionId: string, price: number, quality: boolean, qty?:number,printSummary?:string) => void;
   setQty: (key: string, qty: number) => void;
   remove: (key: string) => void;
   clear: () => void;
@@ -40,7 +48,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
     try {
       const parsed = JSON.parse(localStorage.getItem(CART_KEY) || "[]");
       // Bỏ qua dữ liệu giỏ hàng theo định dạng cũ (trước khi có biến thể)
-      return Array.isArray(parsed) ? parsed.filter((i) => i && i.variantId && i.productId) : [];
+      return Array.isArray(parsed) ? parsed.filter((i) => i && i.variantId && i.productId).map(i=>({...i,key:cartLineKey(i.variantId,i.designRevisionId)})) : [];
     } catch {
       return [];
     }
@@ -52,14 +60,15 @@ export function CartProvider({ children }: { children: ReactNode }) {
   }, [items]);
 
   const add = (product: Product, variant: Variant, qty = 1) => {
+    const key=cartLineKey(variant.id);
     setItems((prev) => {
-      const existing = prev.find((i) => i.key === variant.id);
+      const existing = prev.find((i) => i.key === key);
       if (existing) {
         const nextQty = Math.min(existing.qty + qty, variant.stock, 20);
-        return prev.map((i) => (i.key === variant.id ? { ...i, qty: nextQty, maxStock: variant.stock } : i));
+        return prev.map((i) => (i.key === key ? { ...i, qty: nextQty, maxStock: variant.stock } : i));
       }
       return [...prev, {
-        key: variant.id,
+        key,
         productId: product.id,
         variantId: variant.id,
         title: product.title,
@@ -82,14 +91,19 @@ export function CartProvider({ children }: { children: ReactNode }) {
     );
 
   const remove = (key: string) => setItems((prev) => prev.filter((i) => i.key !== key));
+  const addCustom = (product:Product,variant:Variant,revisionId:string,price:number,quality:boolean,qty=1,printSummary='') => {
+    const key = cartLineKey(variant.id,revisionId);
+    setItems(prev => { const existing=prev.find(i=>i.key===key);return existing?prev.map(i=>i.key===key?{...i,qty:Math.min(i.qty+qty,variant.stock,20)}:i):[...prev,{key,productId:product.id,variantId:variant.id,title:product.title,color:variant.color,size:variant.size,price,img:product.img,qty:Math.min(qty,variant.stock,20),maxStock:variant.stock,itemType:'custom',designRevisionId:revisionId,qualityAcknowledged:quality,basePrice:product.price,printFee:price-product.price,printSummary}]; });
+    setOpen(true);
+  };
   const clear = () => setItems([]);
-  const payload = () => items.map((i) => ({ productId: i.productId, variantId: i.variantId, qty: i.qty }));
+  const payload = () => items.map((i) => ({ productId: i.productId, variantId: i.variantId, qty: i.qty, itemType:i.itemType||'regular',designRevisionId:i.designRevisionId,qualityAcknowledged:i.qualityAcknowledged }));
 
   const count = items.reduce((s, i) => s + i.qty, 0);
   const subtotal = items.reduce((s, i) => s + i.price * i.qty, 0);
 
   return (
-    <Ctx.Provider value={{ items, count, subtotal, open, setOpen, add, setQty, remove, clear, payload }}>
+    <Ctx.Provider value={{ items, count, subtotal, open, setOpen, add, addCustom, setQty, remove, clear, payload }}>
       {children}
     </Ctx.Provider>
   );

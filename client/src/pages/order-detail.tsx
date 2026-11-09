@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
+import { PrintJobs } from '@/components/print-jobs';
+import { PrivateImage } from '@/components/private-image';
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   Truck, Package, MapPin, CreditCard, Loader2, XCircle, RefreshCcw,
@@ -85,7 +87,7 @@ export default function OrderDetail() {
     );
   }
 
-  const canCancel = CANCELLABLE.includes(order.status);
+  const canCancel = CANCELLABLE.includes(order.status) && !order.items.some(i=>i.stockConsumed);
   const activeReturn = returns.find((r) => r.status !== "rejected");
 
   return (
@@ -107,6 +109,7 @@ export default function OrderDetail() {
           <Badge variant={PAY_STATUS_TONE[order.payStatus]}>{PAY_STATUS_LABEL[order.payStatus]}</Badge>
         </div>
       </header>
+      {order.demo&&<p className="mt-3 rounded border p-3 text-sm">Dữ liệu minh họa lớp học. Không có giao dịch thu tiền hoặc vận đơn thật.</p>}
 
       {/* Hành động */}
       <div className="mt-6 flex flex-wrap gap-2">
@@ -132,6 +135,7 @@ export default function OrderDetail() {
         </p>
       )}
 
+      {order.items.some(i=>i.itemType==='custom') && <PrintJobs orderId={order.id}/>}
       <div className="mt-8 grid gap-6 lg:grid-cols-[1.4fr_1fr]">
         <div className="space-y-6">
           {/* Sản phẩm */}
@@ -139,12 +143,13 @@ export default function OrderDetail() {
             <h2 className="mb-4 font-display text-sm font-bold uppercase tracking-wide">Sản phẩm</h2>
             <ul className="space-y-4">
               {order.items.map((item) => (
-                <li key={item.variantId} className="flex gap-3">
-                  <img src={item.img} alt="" width={56} height={72} className="h-18 w-14 shrink-0 rounded border border-border object-cover" />
+                <li key={item.lineId || item.variantId} className="flex gap-3">
+                  <PrivateImage src={item.img} alt="" width={56} height={72} className="h-18 w-14 shrink-0 rounded border border-border object-cover" />
                   <div className="min-w-0 flex-1">
                     <Link to={`/product/${item.productId}`} className="font-medium hover:text-brand">{item.title}</Link>
                     <p className="text-sm text-muted-foreground">{item.color} / {item.size}</p>
                     <p className="text-sm text-muted-foreground">{money(item.price)} × {item.qty}</p>
+                    {item.priceBreakdown&&<p className="text-xs">Áo {money(item.priceBreakdown.basePrice)} + in trước {money(item.priceBreakdown.frontFee)} + in sau {money(item.priceBreakdown.backFee)}</p>}
                   </div>
                   <span className="font-display font-semibold">{money(item.price * item.qty)}</span>
                 </li>
@@ -199,7 +204,7 @@ export default function OrderDetail() {
                   {r.photos.length > 0 && (
                     <div className="mt-3 flex gap-2">
                       {r.photos.map((src) => (
-                        <img key={src} src={src} alt="Ảnh minh chứng" width={64} height={64} className="size-16 rounded border border-border object-cover" />
+                        <PrivateImage key={src} src={src} alt="Ảnh minh chứng" width={64} height={64} className="size-16 rounded border border-border object-cover" />
                       ))}
                     </div>
                   )}
@@ -232,6 +237,9 @@ export default function OrderDetail() {
                 <Truck className="size-4" /> Vận chuyển
               </h2>
               {order.shipping.carrier && <p className="text-sm">Đơn vị: <b>{order.shipping.carrier}</b></p>}
+              <p className="text-xs text-muted-foreground">Theo dõi thủ công do nhân viên cập nhật.</p>
+              {order.shipping.estimatedDeliveryAt&&<p className="text-sm">Dự kiến giao: {new Date(order.shipping.estimatedDeliveryAt).toLocaleDateString('vi-VN')}</p>}
+              {order.shipping.customerNote&&<p className="text-sm">{order.shipping.customerNote}</p>}
               {order.shipping.trackingNumber && (
                 <p className="mt-1 text-sm">Mã vận đơn: <b className="font-mono">{order.shipping.trackingNumber}</b></p>
               )}
@@ -357,7 +365,7 @@ function ReturnDialog({
   const [reason, setReason] = useState(eligibility.reasons[0]?.value ?? "");
   const [description, setDescription] = useState("");
   const [selected, setSelected] = useState<Record<string, number>>(
-    Object.fromEntries(order.items.map((i) => [i.variantId, 0]))
+    Object.fromEntries(order.items.map((i) => [i.lineId || i.variantId, 0]))
   );
   const [photos, setPhotos] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
@@ -385,7 +393,7 @@ function ReturnDialog({
     body.append("type", type);
     body.append("reason", reason);
     body.append("description", description.trim());
-    body.append("items", JSON.stringify(chosenItems.map(([variantId, qty]) => ({ variantId, qty }))));
+    body.append("items", JSON.stringify(chosenItems.map(([key, qty]) => { const item=order.items.find(i=>(i.lineId||i.variantId)===key)!;return {lineId:item.lineId,variantId:item.variantId,qty}; })));
     photos.forEach((p) => body.append("photos", p));
 
     if (needsBank) {
@@ -439,16 +447,16 @@ function ReturnDialog({
           <legend className="mb-2 text-sm font-medium">Sản phẩm muốn đổi/trả *</legend>
           <div className="space-y-2">
             {order.items.map((item) => (
-              <div key={item.variantId} className="flex items-center gap-3 rounded-lg border border-border p-3">
-                <img src={item.img} alt="" width={40} height={52} className="h-13 w-10 shrink-0 rounded object-cover" />
+              <div key={item.lineId || item.variantId} className="flex items-center gap-3 rounded-lg border border-border p-3">
+                <PrivateImage src={item.img} alt="" width={40} height={52} className="h-13 w-10 shrink-0 rounded object-cover" />
                 <div className="min-w-0 flex-1 text-sm">
                   <p className="truncate font-medium">{item.title}</p>
                   <p className="text-xs text-muted-foreground">{item.color} / {item.size} · đã mua {item.qty}</p>
                 </div>
                 <select
                   aria-label={`Số lượng đổi/trả cho ${item.title}`}
-                  value={selected[item.variantId] ?? 0}
-                  onChange={(e) => setSelected((prev) => ({ ...prev, [item.variantId]: Number(e.target.value) }))}
+                  value={selected[item.lineId || item.variantId] ?? 0}
+                  onChange={(e) => setSelected((prev) => ({ ...prev, [item.lineId || item.variantId]: Number(e.target.value) }))}
                   className="h-10 shrink-0 rounded border border-input bg-background px-2 text-sm"
                 >
                   {Array.from({ length: item.qty + 1 }, (_, n) => (

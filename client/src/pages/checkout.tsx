@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import {PrivateImage} from '@/components/private-image';
+import {GuestCheckout} from '@/components/guest-checkout';
+import { useCallback, useEffect, useState, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Truck, CreditCard, Loader2, Tag, X, MapPin, Plus, ShieldAlert, Check } from "lucide-react";
+import { Truck, CreditCard, Loader2, Tag, X, MapPin, Plus, ShieldAlert, Check, QrCode } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,18 +13,25 @@ import { useToast } from "@/context/toast";
 import { api, ApiError, type Address, type Order, type Quote } from "@/lib/api";
 import { money, cn } from "@/lib/utils";
 
-type PayMethod = "cod" | "vnpay";
+type PayMethod = "cod" | "vnpay" | "vietqr";
 
 const METHODS: { value: PayMethod; icon: typeof Truck; title: string; desc: string }[] = [
   { value: "cod", icon: Truck, title: "Thanh toán khi nhận hàng (COD)", desc: "Trả tiền mặt cho nhân viên giao hàng" },
   { value: "vnpay", icon: CreditCard, title: "VNPay — thẻ ATM / QR / Internet Banking", desc: "Chuyển tới cổng VNPay để thanh toán an toàn" },
+  { value: "vietqr", icon: QrCode, title: "Chuyển khoản VietQR", desc: "Quét mã bằng app ngân hàng, cửa hàng xác nhận khi tiền về" },
 ];
 
-export default function Checkout() {
+export default function Checkout(){const {user,ready}=useAuth();return !ready?<p>Đang tải…</p>:user?<AccountCheckout/>:<GuestCheckout/>;}
+function AccountCheckout() {
   const { items, payload, clear } = useCart();
   const { user, ready } = useAuth();
   const toast = useToast();
   const navigate = useNavigate();
+  const requestKey = useRef(crypto.randomUUID());
+  const requestSignature = useRef('');
+  const recoveryKey = `vela-checkout:${user?.id}`;
+  const [unpaidOrder,setUnpaidOrder]=useState('');
+  useEffect(()=>{try{const data=JSON.parse(sessionStorage.getItem(recoveryKey)||'null');if(data){requestKey.current=data.key;requestSignature.current=data.signature;if(data.orderId)void api.get<Order>(`/api/orders/${data.orderId}`).then(order=>{if(order.payStatus==='paid'||['cancelled','refunded','refund_pending'].includes(order.status)){sessionStorage.removeItem(recoveryKey);requestKey.current=crypto.randomUUID();requestSignature.current='';setUnpaidOrder('');}else setUnpaidOrder(data.orderId);}).catch(()=>setUnpaidOrder(data.orderId));}}catch{}},[recoveryKey]);
 
   const [addresses, setAddresses] = useState<Address[]>([]);
   const [addressId, setAddressId] = useState("");
@@ -40,17 +49,21 @@ export default function Checkout() {
   const [placing, setPlacing] = useState(false);
   // Cổng thanh toán có thể bị tắt (chưa cấu hình) — chỉ hiện lựa chọn thật sự dùng được
   const [vnpayEnabled, setVnpayEnabled] = useState(true);
+  const [vietqrEnabled, setVietqrEnabled] = useState(false);
 
   useEffect(() => {
-    api.get<{ vnpayEnabled: boolean }>("/api/payment/config")
+    api.get<{ vnpayEnabled: boolean; vietqr?: { enabled: boolean } }>("/api/payment/config")
       .then((cfg) => {
         setVnpayEnabled(cfg.vnpayEnabled);
-        if (!cfg.vnpayEnabled) setPay("cod");
+        setVietqrEnabled(Boolean(cfg.vietqr?.enabled));
+        if (!cfg.vnpayEnabled) setPay((current) => (current === "vnpay" ? "cod" : current));
       })
       .catch(() => setVnpayEnabled(false));
   }, []);
 
-  const availableMethods = METHODS.filter((m) => m.value !== "vnpay" || vnpayEnabled);
+  const availableMethods = METHODS.filter(
+    (m) => (m.value !== "vnpay" || vnpayEnabled) && (m.value !== "vietqr" || vietqrEnabled)
+  );
 
   /* ---------- chặn truy cập khi chưa đủ điều kiện ---------- */
   useEffect(() => {
@@ -147,23 +160,31 @@ export default function Checkout() {
 
   /* ---------- đặt hàng ---------- */
   async function placeOrder() {
+    if(unpaidOrder){navigate(`/payment/${unpaidOrder}`);return;}
     if (!addressId) return toast.error("Vui lòng chọn địa chỉ giao hàng");
     setPlacing(true);
+    const signature=JSON.stringify([payload(),addressId,appliedVoucher,pay,quote?.total]);
+    if(requestSignature.current!==signature){requestKey.current=crypto.randomUUID();requestSignature.current=signature;}
     try {
+      sessionStorage.setItem(recoveryKey,JSON.stringify({key:requestKey.current,signature}));
       const order = await api.post<Order>("/api/orders", {
         items: payload(),
         addressId,
         voucherCode: appliedVoucher || undefined,
         payMethod: pay,
+        acceptedTotal: quote?.total,
+        requestKey: requestKey.current,
       });
-      clear();
-
       if (pay === "vnpay") {
+        setUnpaidOrder(order.id);
+        sessionStorage.setItem(recoveryKey,JSON.stringify({key:requestKey.current,signature,orderId:order.id}));
         const { url } = await api.post<{ url: string }>("/api/payment/vnpay/create", { orderId: order.id });
         window.location.href = url; // rời SPA sang cổng thanh toán
         return;
       }
-      navigate(`/payment/${order.id}?cod=1`, { replace: true });
+      clear();sessionStorage.removeItem(recoveryKey);
+      // VietQR: sang trang thanh toán để hiện mã QR và chờ cửa hàng xác nhận
+      navigate(`/payment/${order.id}${pay === "vietqr" ? "?vietqr=1" : "?cod=1"}`, { replace: true });
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "Đặt hàng thất bại";
       toast.error(message);
@@ -179,6 +200,8 @@ export default function Checkout() {
   if (!ready || !user) {
     return <div className="px-5 py-24 text-center text-muted-foreground">Đang tải…</div>;
   }
+
+  if(unpaidOrder)return <div className="mx-auto max-w-xl space-y-4 px-5 py-16"><h1 className="text-2xl font-bold">Đơn hàng đã được tạo</h1><p>Đơn {unpaidOrder} đang chờ thanh toán. Giỏ hàng vẫn được giữ. Tiếp tục trên đơn này để tránh đặt trùng.</p><Button asChild><Link to={`/payment/${unpaidOrder}`}>Tiếp tục / thử lại thanh toán</Link></Button><p><Link className="underline" to={`/orders/${unpaidOrder}`}>Xem trạng thái hoặc hủy đơn</Link></p></div>;
 
   if (!items.length) {
     return (
@@ -286,10 +309,11 @@ export default function Checkout() {
             <ul className="mt-4 space-y-3">
               {items.map((item) => (
                 <li key={item.key} className="flex gap-3">
-                  <img src={item.img} alt="" width={48} height={60} className="h-15 w-12 shrink-0 rounded border border-border object-cover" />
+                  <PrivateImage src={item.img} alt="" width={48} height={60} className="h-15 w-12 shrink-0 rounded border border-border object-cover" />
                   <div className="min-w-0 flex-1 text-sm">
                     <p className="truncate font-medium">{item.title}</p>
                     <p className="text-xs text-muted-foreground">{item.color} / {item.size} × {item.qty}</p>
+                    {item.itemType === 'custom' && <p className="text-xs">In theo thiết kế riêng · giá được kiểm tra lại bên dưới</p>}
                   </div>
                   <span className="text-sm font-medium">{money(item.price * item.qty)}</span>
                 </li>
@@ -333,6 +357,7 @@ export default function Checkout() {
             {quote ? (
               <div className="mt-5 space-y-2 border-t border-border pt-4 text-sm">
                 <div className="flex justify-between"><span>Tạm tính</span><span>{money(quote.subtotal)}</span></div>
+                {quote.items.filter(i=>i.priceBreakdown).map(i=><p key={i.lineId} className="text-xs">{i.title}: áo {money(i.priceBreakdown!.basePrice)} + in {money(i.priceBreakdown!.frontFee+i.priceBreakdown!.backFee)} × {i.qty}</p>)}
                 {quote.discount > 0 && (
                   <div className="flex justify-between text-emerald-700">
                     <span>Giảm giá{quote.voucher ? ` (${quote.voucher.code})` : ""}</span>
@@ -379,7 +404,8 @@ export default function Checkout() {
             >
               {placing
                 ? <><Loader2 className="animate-spin" /> Đang xử lý…</>
-                : pay === "vnpay" ? `Thanh toán VNPay · ${money(quote?.total ?? 0)}` : "Đặt hàng"}
+                : pay === "vnpay" ? `Thanh toán VNPay · ${money(quote?.total ?? 0)}`
+                : pay === "vietqr" ? `Đặt hàng & nhận mã QR · ${money(quote?.total ?? 0)}` : "Đặt hàng"}
             </Button>
 
             {!addressId && addresses.length > 0 && (

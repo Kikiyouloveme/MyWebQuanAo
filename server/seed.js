@@ -1,6 +1,6 @@
 /**
  * Tạo dữ liệu khởi tạo cho VELATHIER.
- * Chạy: npm run seed   (ghi đè toàn bộ dữ liệu hiện có)
+ * Chạy: npm run seed (chỉ tạo khi database trống)
  */
 require('./config');
 const bcrypt = require('bcryptjs');
@@ -160,17 +160,17 @@ const users = [
   {
     id: 'u_admin', name: 'Quản trị viên', email: 'admin@velathier.vn',
     phone: '0901000001', pass: bcrypt.hashSync('admin123', ROUNDS),
-    role: 'admin', emailVerified: true, addresses: [], tokensValidFrom: Date.now(), createdAt: now(),
+    role: 'admin', emailVerified: true, avatarId: 3, addresses: [], tokensValidFrom: Date.now(), createdAt: now(),
   },
   {
     id: 'u_staff', name: 'Nhân viên bán hàng', email: 'staff@velathier.vn',
     phone: '0901000002', pass: bcrypt.hashSync('staff123', ROUNDS),
-    role: 'staff', emailVerified: true, addresses: [], tokensValidFrom: Date.now(), createdAt: now(),
+    role: 'staff', emailVerified: true, avatarId: 2, addresses: [], tokensValidFrom: Date.now(), createdAt: now(),
   },
   {
     id: 'u_demo', name: 'Khách Thử Nghiệm', email: 'khach@velathier.vn',
     phone: '0901000003', pass: bcrypt.hashSync('khach123', ROUNDS),
-    role: 'customer', emailVerified: true, tokensValidFrom: Date.now(), createdAt: now(),
+    role: 'customer', emailVerified: true, avatarId: 1, tokensValidFrom: Date.now(), createdAt: now(),
     addresses: [{
       id: db.uid('addr'), fullName: 'Khách Thử Nghiệm', phone: '0901000003',
       province: 'TP. Hồ Chí Minh', district: 'Quận 1', ward: 'Phường Bến Nghé',
@@ -214,7 +214,13 @@ const vouchers = [
 
 /* ---------------- ghi dữ liệu ---------------- */
 
+async function seed() {
+await db.connect();
+await db.run(() => {
 const data = db.load();
+if (Object.keys(db.models).filter((key) => key !== 'metadata').some((key) => data[key].length)) {
+  throw new Error('Database đã có dữ liệu. Seed bị hủy để bảo toàn dữ liệu; hãy chọn database trống trong MONGO_URI.');
+}
 data.schemaVersion = db.SCHEMA_VERSION;
 data.products = products;
 data.users = users;
@@ -225,6 +231,7 @@ data.otps = [];
 data.emails = [];
 data.counters = { order: 1000, return: 500 };
 db.saveNow();
+});
 
 const totalStock = products.reduce((s, p) => s + p.variants.reduce((t, v) => t + v.stock, 0), 0);
 const totalVariants = products.reduce((s, p) => s + p.variants.length, 0);
@@ -236,3 +243,6 @@ console.log(`  ${users.length} tài khoản:`);
 console.log(`    Admin  admin@velathier.vn / admin123`);
 console.log(`    Staff  staff@velathier.vn / staff123`);
 console.log(`    Khách  khach@velathier.vn / khach123\n`);
+
+}
+seed().catch((e) => { console.error(e.message); process.exitCode = 1; }).finally(() => db.close());

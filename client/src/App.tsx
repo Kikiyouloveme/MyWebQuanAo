@@ -20,6 +20,8 @@ const Account = lazy(() => import("@/pages/account"));
 const Orders = lazy(() => import("@/pages/orders"));
 const OrderDetail = lazy(() => import("@/pages/order-detail"));
 const Admin = lazy(() => import("@/pages/admin"));
+const DesignStudio = lazy(() => import("@/pages/design-studio"));
+const Designs = lazy(() => import("@/pages/designs"));
 
 const About = lazy(() => import("@/pages/content").then((m) => ({ default: m.About })));
 const Contact = lazy(() => import("@/pages/content").then((m) => ({ default: m.Contact })));
@@ -28,7 +30,7 @@ const NotFound = lazy(() => import("@/pages/content").then((m) => ({ default: m.
 
 function ScrollTop() {
   const { pathname } = useLocation();
-  useEffect(() => window.scrollTo(0, 0), [pathname]);
+  useEffect(() => { window.scrollTo(0, 0); }, [pathname]);
   return null;
 }
 
@@ -74,10 +76,13 @@ export default function App() {
                 <Route path="/verify-email" element={page(<VerifyEmail />)} />
 
                 {/* Cần đăng nhập */}
-                <Route path="/checkout" element={<Protected>{page(<Checkout />)}</Protected>} />
+                <Route path="/checkout" element={page(<Checkout />)} />
                 <Route path="/payment/:orderId" element={<Protected>{page(<Payment />)}</Protected>} />
                 <Route path="/account" element={<Protected>{page(<Account />)}</Protected>} />
                 <Route path="/orders" element={<Protected>{page(<Orders />)}</Protected>} />
+                <Route path="/designs" element={page(<Designs />)} />
+                <Route path="/designs/new" element={page(<DesignStudio />)} />
+                <Route path="/designs/:id" element={page(<DesignStudio />)} />
                 <Route path="/orders/:id" element={<Protected>{page(<OrderDetail />)}</Protected>} />
 
                 {/* Quản trị */}

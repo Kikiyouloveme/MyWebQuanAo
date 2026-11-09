@@ -1,8 +1,10 @@
+import {PrivateImage} from '@/components/private-image';
 import { useEffect, useId, useRef, useState } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { ShoppingBag, User, Menu, X, Minus, Plus, Trash2, ShieldCheck, Home, Store, Search, ChevronDown, Package, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { LogoLink } from "@/components/logo";
+import { AvatarGlyph } from "@/components/ui/avatar-glyph";
 import { useAuth } from "@/context/auth";
 import { useCart } from "@/context/cart";
 import { money, cn } from "@/lib/utils";
@@ -101,7 +103,7 @@ function AccountMenu() {
         aria-expanded={open}
         className="flex h-11 cursor-pointer items-center gap-2 px-2"
       >
-        <User className="size-5 shrink-0" />
+        {user ? <AvatarGlyph avatarId={user.avatarId} size={22} className="shrink-0" /> : <User className="size-5 shrink-0" />}
         <span className="hidden text-left leading-tight sm:block">
           <span className="block text-[11px] text-muted-foreground">
             {user ? `Xin chào, ${user.name.split(" ").slice(-1)[0]}` : "Đăng nhập / Đăng ký"}
@@ -198,10 +200,11 @@ function CartDrawer() {
           ) : (
             items.map((i) => (
               <div key={i.key} className="grid grid-cols-[64px_1fr_auto] gap-3 border-b border-border py-3">
-                <img src={i.img} alt="" width={64} height={80} className="h-20 w-16 rounded border border-border object-cover" />
+                <PrivateImage src={i.img} alt="" width={64} height={80} className="h-20 w-16 rounded border border-border object-cover" />
                 <div>
                   <p className="font-display text-sm font-semibold">{i.title}</p>
                   <p className="text-xs text-muted-foreground">{i.color} / {i.size}</p>
+                  {i.itemType==='custom'&&<p className="text-xs">{i.printSummary}<br/>Áo {money(i.basePrice||0)} + in {money(i.printFee||0)}</p>}
                   <div className="mt-2 flex items-center gap-2">
                     <span className="inline-flex items-center border border-border">
                       <button className="grid size-9 cursor-pointer place-items-center" onClick={() => setQty(i.key, i.qty - 1)} aria-label={`Giảm số lượng ${i.title}`}>
@@ -428,6 +431,8 @@ function Footer() {
             <li><Link className="inline-block py-2 hover:text-brand" to="/contact">Liên hệ</Link></li>
             <li><Link className="inline-block py-2 hover:text-brand" to="/news">Tin tức</Link></li>
             <li><Link className="inline-block py-2 hover:text-brand" to="/orders">Tra cứu đơn hàng</Link></li>
+            <li><Link className="inline-block py-2 hover:text-brand" to="/designs">Thiết kế của tôi</Link></li>
+            <li><Link className="inline-block py-2 hover:text-brand" to="/shop?tag=custom">Áo in theo yêu cầu</Link></li>
           </ul>
         </div>
         <div>

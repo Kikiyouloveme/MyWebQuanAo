@@ -1,0 +1,14 @@
+import { useEffect,useState } from 'react';
+import { Link } from 'react-router-dom';
+import { api,type Product,type Variant } from '@/lib/api';
+import type { PrintSettings,SizeChart } from '@/lib/custom-print';
+import { Button } from '@/components/ui/button';
+import { useToast } from '@/context/toast';
+export function CustomProduct({product,variant}:{product:Product;variant:Variant|null}) {
+  const toast=useToast();
+  const [settings,setSettings]=useState<PrintSettings|null>(null),[chart,setChart]=useState<SizeChart|null>(null),[chest,setChest]=useState(90),[fit,setFit]=useState('Regular'),[answer,setAnswer]=useState(''),[error,setError]=useState('');
+  useEffect(()=>{Promise.all([api.get<PrintSettings>(`/api/products/${product.id}/print-options`),api.get<SizeChart>(`/api/products/${product.id}/size-guide`)]).then(([s,c])=>{setSettings(s);setChart(c);}).catch(e=>{setError(e.message);toast.error(e.message);});},[product.id]);
+  return <section className="my-5 space-y-4">{settings?.enabled&&<><Button className="w-full" asChild disabled={!variant?.stock}><Link to={`/designs/new?product=${product.id}&variant=${variant?.id}`}>Tự thiết kế áo</Link></Button><Link to="/designs" className="block text-sm underline">Tiếp tục bản nháp của tôi</Link></>}
+    {chart&&<details className="rounded-lg border p-4"><summary className="cursor-pointer font-medium">Bảng size & gợi ý độ vừa</summary><p className="my-3 text-sm">{chart.sample?'Dữ liệu mẫu demo. ':''}Số đo áo (cm), phom {chart.fit}. Vòng ngực là chu vi áo, không phải số đo cơ thể.</p><table className="w-full text-left text-sm"><thead><tr><th>Size</th><th>Ngực áo</th><th>Dài áo</th></tr></thead><tbody>{chart.rows.map(r=><tr key={r.size}><td>{r.size}</td><td>{r.chest}</td><td>{r.length}</td></tr>)}</tbody></table><div className="my-3 flex flex-wrap gap-2"><label>Vòng ngực cơ thể<input aria-label="Vòng ngực cơ thể cm" type="number" className="ml-2 w-20 rounded border p-2" value={chest} onChange={e=>setChest(Number(e.target.value))}/></label><select aria-label="Độ rộng mong muốn" value={fit} onChange={e=>setFit(e.target.value)}>{['Regular','Relaxed','Oversized'].map(f=><option key={f}>{f}</option>)}</select><Button size="sm" variant="outline" onClick={async()=>{try{const result=await api.post<{size:string;explanation:string}>(`/api/products/${product.id}/size-recommendation`,{chest,fit,color:variant?.color});setAnswer(`${result.size?'Size '+result.size+': ':''}${result.explanation}`);toast.success('Đã gợi ý size dựa trên số đo bạn nhập');}catch(e){const message=(e as Error).message;setAnswer(message);toast.error(message);}}}>Gợi ý size</Button></div><p aria-live="polite">{answer}</p><p className="mt-2 text-xs">Gợi ý ước tính. Đối chiếu số đo thực tế; số đo cơ thể không được lưu.</p></details>}{error&&<p role="alert">{error}</p>}
+  </section>;
+}
